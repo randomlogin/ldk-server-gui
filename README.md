@@ -39,6 +39,12 @@ A new token at every start is awkward for a service that restarts. With `--actio
 <path>` the token is read from a file instead (at least 24 characters, for example from
 `openssl rand -hex 32`, mode 600). It then stays the same across restarts and is never printed.
 
+The token can also be given directly: with the `LDK_SERVER_GUI_ACTION_TOKEN` environment variable, or with
+`--action-token <token>`. Prefer the variable or the file: a token on the command line can be read by
+every user of the machine in the process list (and ends up in the shell history), so the dashboard
+prints a warning when it is given that way. Give the token one way only (a second one is an error), at
+least 24 characters of visible ASCII; it is never printed unless the dashboard generated it.
+
 The control page asks for it once and stores it in the browser's `localStorage`; it is sent as the
 `X-Action-Token` header. This blocks CSRF ( cross-origin pages can't set custom headers), but the
 overall threat model is still "localhost-only": **do not bind the GUI to a non-loopback address
@@ -66,9 +72,12 @@ its peer and the reason it was closed.
 A transaction is shown as a link to a block explorer wherever one is listed: the funding transaction of
 a channel that is opening or being spliced (also while it waits for confirmations), the transaction of
 an on-chain payment or send, and a channel's funding transaction in the channels table. The explorer is
-`--explorer-url` (for Mutinynet: `--explorer-url https://mutinynet.com`); without it the dashboard uses
-mempool.space for the node's network (`/signet` for signet, which is not Mutinynet, a custom signet),
-and shows the ID without a link for regtest. Only `http(s)` addresses are used. The copy button next
+`--explorer-url` (for Mutinynet: `--explorer-url https://mutinynet.com`). Without it the dashboard
+looks at the node's configuration (`--config`): a `[cbf]` section with `custom_signet_magic = "a5df2dcb"`
+is Mutinynet, and an `[esplora]` `server_url` such as `https://mutinynet.com/api` has its explorer at the
+same address without `/api`. Failing that it uses mempool.space for the node's network, which for
+`signet` is the default signet and not Mutinynet (a custom signet: its transactions are "not found"
+there), and shows the ID without a link for regtest. Only `http(s)` addresses are used. The copy button next
 to a link copies the full transaction ID.
 
 ## Who a payment went to
@@ -150,7 +159,9 @@ Every page ends with a line showing what is running: this dashboard, and the nod
 (ldk-server, the ldk-node inside it, and the kyoto inside that), each with its version, git branch
 and commit. `+uncommitted` means it was built from a tree with uncommitted changes.
 
-The dashboard records its own at build time (`build.rs`). The node reports the other three in the
+The names are links: to the repository when the build says where its code came from, with the branch and
+commit linked too (GitHub); a node built before that was reported (an older ldk-server) still gets each
+name linked to the project's own page. The dashboard records its own at build time (`build.rs`). The node reports the other three in the
 `ldk_server_build_info` metric of its `/metrics`, recorded by ldk-server's `build.rs` from the
 checkouts it is compiled against, so the node needs its metrics enabled. `/api/versions` returns the
 same as JSON.

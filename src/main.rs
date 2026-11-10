@@ -54,10 +54,18 @@ const VERSIONS_FOOTER: &str = r##"<footer id="build-versions" style="margin-top:
   var escapes = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return escapes[c]; }); }
   // The name, branch and commit link to the repository, its branch and its commit, when the build
-  // knows the repository and it is on GitHub. Only plain https addresses are ever linked.
-  function link(href, text) {
+  // knows the repository and it is on GitHub. A build that does not say where its code came from (an
+  // older ldk-server) still gets its name linked to the project's own page. Only plain https addresses
+  // are ever linked.
+  var PROJECTS = {
+    "ldk-server": "https://github.com/lightningdevkit/ldk-server",
+    "ldk-node": "https://github.com/lightningdevkit/ldk-node",
+    "kyoto": "https://github.com/2140-dev/kyoto",
+  };
+  function link(href, text, title) {
     if (!href) return esc(text);
-    return '<a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted">' + esc(text) + "</a>";
+    return '<a href="' + esc(href) + '" target="_blank" rel="noopener"' + (title ? ' title="' + esc(title) + '"' : "") +
+      ' style="color:inherit;text-decoration:underline dotted">' + esc(text) + "</a>";
   }
   function show(data) {
     var parts = (data.components || []).map(function (c) {
@@ -68,7 +76,9 @@ const VERSIONS_FOOTER: &str = r##"<footer id="build-versions" style="margin-top:
       var branch = github && c.branch && c.branch !== "unknown" && c.branch !== "detached"
         ? repo + "/tree/" + c.branch.split("/").map(encodeURIComponent).join("/") : "";
       var commit = github && /^[0-9a-f]{7,40}$/.test(c.commit || "") ? repo + "/commit/" + c.commit : "";
-      return '<span class="mono" title="' + title + '">' + link(repo, c.component) + " " + esc(c.version) +
+      var project = repo ? "" : (PROJECTS[c.component] || "");
+      var name = repo ? link(repo, c.component) : link(project, c.component, "the project's page: this build did not say where its code came from");
+      return '<span class="mono" title="' + title + '">' + name + " " + esc(c.version) +
         " · " + link(branch, c.branch) + " @ " + link(commit, c.commit) +
         (dirty ? ' <span style="color:var(--accent2,#ffd166)">+uncommitted</span>' : "") + "</span>";
     });
@@ -141,6 +151,13 @@ struct Args {
 		help = "Read the action token from this file instead of generating a new one at each start"
 	)]
 	action_token_file: Option<PathBuf>,
+
+	#[arg(
+		long,
+		requires = "enable_actions",
+		help = "The action token itself (at least 24 characters). Other users of this machine can read it in the process list: prefer --action-token-file or the LDK_SERVER_GUI_ACTION_TOKEN environment variable, which does the same"
+	)]
+	action_token: Option<String>,
 
 	#[arg(
 		long,
@@ -236,6 +253,57 @@ impl AppState {
 // The shortest action token that is read from a file. The control panel can move funds.
 const MIN_ACTION_TOKEN_LEN: usize = 24;
 
+// The environment variable that can hold the action token.
+const ACTION_TOKEN_ENV: &str = "LDK_SERVER_GUI_ACTION_TOKEN";
+
+// Where the action token came from.
+#[derive(Debug, PartialEq)]
+enum ActionTokenSource {
+	CommandLine,
+	Environment,
+	File(PathBuf),
+	Generated,
+}
+
+// A token given directly (on the command line or in the environment): at least
+// `MIN_ACTION_TOKEN_LEN` characters, and only what can go in an HTTP header value without being
+// changed on the way (visible ASCII, no spaces).
+fn check_action_token(token: &str, origin: &str) -> Result<Arc<str>, String> {
+	let token = token.trim();
+	if token.len() < MIN_ACTION_TOKEN_LEN {
+		return Err(format!(
+			"the action token from {origin} is too short, use at least {MIN_ACTION_TOKEN_LEN} characters (for example `openssl rand -hex 32`)"
+		));
+	}
+	if !token.bytes().all(|b| b.is_ascii_graphic()) {
+		return Err(format!("the action token from {origin} has a space or a character that is not plain ASCII"));
+	}
+	Ok(Arc::from(token))
+}
+
+// The action token, from exactly one of: --action-token, the environment variable, --action-token-file;
+// or a random one made now if none is given. Giving it two ways is an error, not a choice made quietly.
+fn choose_action_token(
+	command_line: Option<&str>, environment: Option<&str>, file: Option<&std::path::Path>,
+) -> Result<(Arc<str>, ActionTokenSource), String> {
+	let given = command_line.is_some() as u8 + environment.is_some() as u8 + file.is_some() as u8;
+	if given > 1 {
+		return Err(format!(
+			"the action token is given more than once: use only one of --action-token, {ACTION_TOKEN_ENV} and --action-token-file"
+		));
+	}
+	if let Some(token) = command_line {
+		return Ok((check_action_token(token, "--action-token")?, ActionTokenSource::CommandLine));
+	}
+	if let Some(token) = environment {
+		return Ok((check_action_token(token, ACTION_TOKEN_ENV)?, ActionTokenSource::Environment));
+	}
+	if let Some(path) = file {
+		return Ok((read_action_token(path)?, ActionTokenSource::File(path.to_path_buf())));
+	}
+	Ok((generate_action_token()?, ActionTokenSource::Generated))
+}
+
 // Reads the action token from a file, so it stays the same across restarts and does not show up in
 // the process list or the log. Whitespace around it, such as the final newline, is ignored.
 fn read_action_token(path: &std::path::Path) -> Result<Arc<str>, String> {
@@ -283,19 +351,30 @@ async fn main() {
 	});
 
 	let action_token = if args.enable_actions {
-		let token = match &args.action_token_file {
-			Some(path) => read_action_token(path),
-			None => generate_action_token(),
-		}
+		let environment = std::env::var(ACTION_TOKEN_ENV).ok().filter(|t| !t.trim().is_empty());
+		let (token, source) = choose_action_token(
+			args.action_token.as_deref(),
+			environment.as_deref(),
+			args.action_token_file.as_deref(),
+		)
 		.unwrap_or_else(|e| {
 			eprintln!("error: {e}");
 			std::process::exit(1);
 		});
 		println!("actions enabled — control panel: http://{}/control", args.listen);
-		match &args.action_token_file {
-			// A token from a file is a secret that is kept: it is never printed.
-			Some(path) => println!("action token read from {}", path.display()),
-			None => println!("action token (enter it on the control page): {token}"),
+		match source {
+			// A token that was given is a secret that is kept: it is never printed.
+			ActionTokenSource::CommandLine => {
+				println!("action token taken from the command line");
+				eprintln!(
+					"warning: the action token is on the command line, where other users of this machine can read it in the \
+					 process list and it may end up in the shell history. Use --action-token-file, or the \
+					 {ACTION_TOKEN_ENV} environment variable, instead."
+				);
+			},
+			ActionTokenSource::Environment => println!("action token taken from {ACTION_TOKEN_ENV}"),
+			ActionTokenSource::File(path) => println!("action token read from {}", path.display()),
+			ActionTokenSource::Generated => println!("action token (enter it on the control page): {token}"),
 		}
 		Some(token)
 	} else {
@@ -332,6 +411,15 @@ async fn main() {
 	};
 	let next_action_id = actions.iter().filter_map(|a| a["id"].as_u64()).max().unwrap_or(0) + 1;
 
+	// The explorer transactions link to: what was asked for, else what the node's configuration points
+	// to, else (in the page) the one for the node's network.
+	let explorer_url = args.explorer_url.clone().or_else(|| {
+		let path = args.config.clone().or_else(get_default_config_path)?;
+		let found = explorer_from_config(&std::fs::read_to_string(path).ok()?)?;
+		println!("explorer for transaction links: {found} (from the node's configuration)");
+		Some(found)
+	});
+
 	let (tx, _rx) = broadcast::channel::<Arc<str>>(256);
 	let state = Arc::new(AppState {
 		snapshot: RwLock::new(Arc::from("{\"ok\":false,\"error\":\"no data yet\"}")),
@@ -354,7 +442,7 @@ async fn main() {
 		actions: std::sync::Mutex::new(actions),
 		next_action_id: AtomicU64::new(next_action_id),
 		actions_file: args.actions_log_file.clone(),
-		explorer_url: args.explorer_url.clone(),
+		explorer_url,
 		action_token,
 		refresh: Arc::clone(&refresh),
 		index_html,
@@ -1028,6 +1116,35 @@ fn clean_alias(raw: &str) -> Option<String> {
 	(!cleaned.is_empty()).then_some(cleaned)
 }
 
+// Where the node's own configuration points to its block explorer, for the transaction links:
+// a custom signet magic of a5df2dcb is Mutinynet, which is not the default signet that
+// mempool.space/signet shows; an Esplora server such as https://mutinynet.com/api has its explorer
+// at the same address without /api. `None` when the configuration says nothing about it.
+fn explorer_from_config(text: &str) -> Option<String> {
+	let mut section = String::new();
+	let (mut esplora, mut magic) = (None, None);
+	for line in text.lines() {
+		let line = line.split('#').next().unwrap_or("").trim();
+		if let Some(name) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+			section = name.trim().to_string();
+			continue;
+		}
+		let Some((key, value)) = line.split_once('=') else { continue };
+		let value = value.trim().trim_matches('"').trim();
+		match (section.as_str(), key.trim()) {
+			("esplora", "server_url") => esplora = Some(value.to_string()),
+			("cbf", "custom_signet_magic") => magic = Some(value.to_ascii_lowercase()),
+			_ => {},
+		}
+	}
+	if magic.as_deref() == Some("a5df2dcb") {
+		return Some("https://mutinynet.com".to_string());
+	}
+	let url = esplora?;
+	let base = url.trim_end_matches('/').strip_suffix("/api")?;
+	(base.starts_with("https://") || base.starts_with("http://")).then(|| base.to_string())
+}
+
 // The IDs of the nodes the page shows: peers, channel counterparties, and the destinations of
 // payments sent from here.
 fn node_ids_in(snap: &Value) -> BTreeSet<String> {
@@ -1674,6 +1791,49 @@ mod tests {
 		assert_eq!(txid_of(&"a".repeat(64)), Some("a".repeat(64)));
 		assert_eq!((txid_of("abc:0"), txid_of(""), txid_of(&"g".repeat(64))), (None, None, None));
 		std::fs::remove_dir_all(&dir).unwrap();
+	}
+
+	#[test]
+	fn the_action_token_comes_from_one_place() {
+		let good = "0123456789abcdef0123456789abcdef";
+		let (token, source) = choose_action_token(Some(good), None, None).unwrap();
+		assert_eq!((&*token, source), (good, ActionTokenSource::CommandLine));
+		let (token, source) = choose_action_token(None, Some(&format!("  {good}\n")), None).unwrap();
+		assert_eq!((&*token, source), (good, ActionTokenSource::Environment));
+		let (token, source) = choose_action_token(None, None, None).unwrap();
+		assert_eq!(source, ActionTokenSource::Generated);
+		assert!(token.len() >= MIN_ACTION_TOKEN_LEN);
+
+		// Too short, or not something a header can carry.
+		assert!(choose_action_token(Some("short"), None, None).unwrap_err().contains("too short"));
+		assert!(choose_action_token(None, Some("has a space in the middle of the token 123"), None)
+			.unwrap_err()
+			.contains("not plain ASCII"));
+		assert!(choose_action_token(Some("tökén0123456789abcdef0123456789"), None, None).is_err());
+		// Two ways at once is refused, and the message names them without printing a token.
+		let both = choose_action_token(Some(good), Some(good), None).unwrap_err();
+		assert!(both.contains("more than once") && !both.contains(good));
+		let with_file = std::path::Path::new("/nonexistent/token");
+		assert!(choose_action_token(None, Some(good), Some(with_file)).unwrap_err().contains("more than once"));
+		// A file that is not there is its own error.
+		assert!(choose_action_token(None, None, Some(with_file)).unwrap_err().contains("failed to read"));
+	}
+
+	#[test]
+	fn the_explorer_follows_from_the_nodes_config() {
+		let mutinynet_cbf = "[node]\nnetwork = \"signet\"\n[cbf]\npeers = [\"127.0.0.1:38333\"]\ncustom_signet_magic = \"A5DF2DCB\"   # Mutinynet\n";
+		assert_eq!(explorer_from_config(mutinynet_cbf).as_deref(), Some("https://mutinynet.com"));
+		let esplora = "[node]\nnetwork = \"signet\"\n[esplora]\nserver_url = \"https://mutinynet.com/api\"\n";
+		assert_eq!(explorer_from_config(esplora).as_deref(), Some("https://mutinynet.com"));
+		let other = "[esplora]\nserver_url = \"https://mempool.space/signet/api/\"";
+		assert_eq!(explorer_from_config(other).as_deref(), Some("https://mempool.space/signet"));
+		// Nothing to go on: the page falls back to the node's network.
+		assert_eq!(explorer_from_config("[node]\nnetwork = \"bitcoin\"\n[bitcoind]\nrpc_address = \"127.0.0.1:8332\""), None);
+		assert_eq!(explorer_from_config("[esplora]\nserver_url = \"https://example.com/esplora\""), None);
+		assert_eq!(explorer_from_config("[electrum]\nserver_url = \"ssl://x.test:50002\""), None);
+		assert_eq!(explorer_from_config("[cbf]\ncustom_signet_magic = \"deadbeef\""), None);
+		// A key in another section does not count.
+		assert_eq!(explorer_from_config("[other]\nserver_url = \"https://x.test/api\""), None);
 	}
 
 	#[test]
