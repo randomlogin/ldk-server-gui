@@ -580,7 +580,7 @@ async fn resources_page(State(state): State<Arc<AppState>>) -> Html<String> {
 // A page with the Control link put into its navigation bar, if actions are enabled, and the marker
 // removed if they are not.
 fn with_control_link(html: &str, actions_enabled: bool) -> Arc<str> {
-	let link = if actions_enabled { r#"<a href="/control">Control</a>"# } else { "" };
+	let link = if actions_enabled { r#"<a href="/control">⚡ Actions</a>"# } else { "" };
 	with_versions(html).replace("<!--CONTROL_LINK-->", link).into()
 }
 

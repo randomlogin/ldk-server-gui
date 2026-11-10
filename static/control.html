@@ -81,6 +81,37 @@ details { border-top: 1px solid var(--border); padding: 8px 0; }
 details:first-of-type { border-top: none; }
 summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 summary:hover { color: var(--accent2); }
+/* Actions look like actions. A panel that does something has an accent edge and a lightning bolt; a
+   read-only one says so. A collapsible command is a button-like row with a verb tag, not an
+   information dropdown: it has a border, a chevron, and lights up when open (red when destructive). */
+.panel.action-panel { border-left: 3px solid var(--accent); }
+.panel.action-panel > h2::before { content: "⚡ "; color: var(--accent); }
+.panel.info-panel > h2::after {
+  content: "read-only"; margin-left: 10px; font-size: 10px; font-weight: 600; letter-spacing: .05em;
+  text-transform: none; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+}
+details.act-row, details.act-row:first-of-type {
+  border: 1px solid var(--border); border-radius: 10px; padding: 0 12px; margin-top: 8px; background: var(--panel2);
+}
+details.act-row > summary {
+  list-style: none; display: flex; align-items: center; gap: 10px; margin: 0 -12px; padding: 10px 12px;
+  border-radius: 10px; font-weight: 600;
+}
+details.act-row > summary::-webkit-details-marker { display: none; }
+details.act-row > summary::after { content: "▸"; margin-left: auto; color: var(--muted); }
+details.act-row[open] > summary::after { content: "▾"; }
+details.act-row > summary:hover { background: rgba(255,255,255,.04); color: var(--text); }
+details.act-row[open], details.act-row:hover { border-color: var(--accent); }
+details.act-row[open] { padding-bottom: 12px; }
+details.act-row[open] > summary {
+  border-bottom: 1px solid var(--border); border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 4px;
+}
+details.act-row.danger[open], details.act-row.danger:hover { border-color: var(--red); }
+.verb {
+  display: inline-block; min-width: 64px; text-align: center; background: var(--accent); color: #1a1206;
+  font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px;
+}
+.verb.danger { background: var(--red); color: #fff; }
 #result { display: none; margin-top: 12px; border-radius: 10px; padding: 10px 14px; font-size: 13px; }
 #result.ok { display: block; background: rgba(63,185,107,.12); border: 1px solid var(--green); }
 #result.err { display: block; background: rgba(229,83,75,.12); border: 1px solid var(--red); }
@@ -117,7 +148,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
 </head>
 <body>
 <header>
-  <h1>⚡ LDK Node Control</h1>
+  <h1>⚡ LDK Node Actions</h1>
   <div>
     <span class="badge" id="tokbadge">no token</span>
   </div>
@@ -126,7 +157,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
   <a href="/">LDK node</a>
   <a href="/kyoto">Kyoto</a>
   <a href="/resources">Resources</a>
-  <a href="/control" class="current">Control</a>
+  <a href="/control" class="current">⚡ Actions</a>
 </nav>
 
 <div id="banner" class="banner"></div>
@@ -149,18 +180,18 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
 
 <div class="grid cols">
 <div>
-  <div class="panel">
+  <div class="panel action-panel">
     <h2>Send payment</h2>
-    <details>
-      <summary>Pay BOLT11 invoice</summary>
+    <details class="act-row">
+      <summary><span class="verb">Pay</span> BOLT11 invoice</summary>
       <label for="b11inv">Invoice</label>
       <textarea id="b11inv" placeholder="lnbc…" spellcheck="false"></textarea>
       <label for="b11amt">Amount (sats) — only for zero-amount invoices</label>
       <input type="number" id="b11amt" min="0" placeholder="leave empty if the invoice has an amount">
       <button class="act" onclick="sendBolt11()">Pay invoice</button>
     </details>
-    <details>
-      <summary>Pay BOLT12 offer</summary>
+    <details class="act-row">
+      <summary><span class="verb">Pay</span> BOLT12 offer</summary>
       <label for="b12offer">Offer</label>
       <textarea id="b12offer" placeholder="lno…" spellcheck="false"></textarea>
       <label for="b12amt">Amount (sats) — only for zero-amount offers</label>
@@ -171,8 +202,8 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
       <input type="text" id="b12note">
       <button class="act" onclick="sendBolt12()">Pay offer</button>
     </details>
-    <details>
-      <summary>Keysend (spontaneous)</summary>
+    <details class="act-row">
+      <summary><span class="verb">Send</span> keysend (spontaneous)</summary>
       <label for="kspeer">From known peers (optional)</label>
       <select id="kspeer" onchange="fillKeysendPeer(this)"><option value="">— manual entry —</option></select>
       <label for="ksnode">Destination node ID</label>
@@ -184,7 +215,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     <div id="paypreview"></div>
   </div>
 
-  <div class="panel">
+  <div class="panel action-panel">
     <h2>Receive payment (BOLT11 invoice)</h2>
     <label for="recvamt">Amount (sats) — leave empty for a variable-amount invoice</label>
     <input type="number" id="recvamt" min="0">
@@ -196,12 +227,12 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     <div id="invoiceout"></div>
   </div>
 
-  <div class="panel">
+  <div class="panel action-panel">
     <h2>On-chain</h2>
     <button class="act secondary" onclick="newAddress()">New receive address</button>
     <div id="addrout"></div>
-    <details>
-      <summary>Send on-chain</summary>
+    <details class="act-row">
+      <summary><span class="verb">Send</span> on-chain</summary>
       <label for="osaddr">Destination address</label>
       <input type="text" id="osaddr" spellcheck="false">
       <label for="osamt">Amount (sats)</label>
@@ -213,10 +244,10 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     </details>
   </div>
 
-  <div class="panel">
+  <div class="panel action-panel">
     <h2>Peers</h2>
-    <details>
-      <summary>Connect peer</summary>
+    <details class="act-row">
+      <summary><span class="verb">Connect</span> a peer</summary>
       <label for="peeruri">Node ID @ address</label>
       <input type="text" id="peeruri" placeholder="02abcdef…@1.2.3.4:9735" spellcheck="false">
       <label class="inline"><input type="checkbox" id="peerpersist"> Persist (reconnect on restart)</label>
@@ -232,7 +263,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
 </div>
 
 <div>
-  <div class="panel">
+  <div class="panel action-panel">
     <h2>Open channel</h2>
     <label for="ocpeer">From known peers (optional)</label>
     <select id="ocpeer" onchange="fillOpenChannelPeer(this)"><option value="">— manual entry —</option></select>
@@ -246,36 +277,36 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     <button class="act" onclick="openChannel()">Open channel</button>
   </div>
 
-  <div class="panel">
+  <div class="panel action-panel">
     <h2>Channel operations <span id="chcount" class="badge"></span></h2>
-    <label for="chpick">Channel</label>
+    <label for="chpick">Channel to act on</label>
     <select id="chpick"></select>
-    <details>
-      <summary>Close channel (cooperative)</summary>
+    <details class="act-row danger">
+      <summary><span class="verb danger">Close</span> channel (cooperative)</summary>
       <button class="act danger" onclick="closeChannel(false)">Cooperative close</button>
     </details>
-    <details>
-      <summary>Force close channel</summary>
+    <details class="act-row danger">
+      <summary><span class="verb danger">Force close</span> channel</summary>
       <label for="fcreason">Reason (optional)</label>
       <input type="text" id="fcreason">
       <button class="act danger" onclick="closeChannel(true)">Force close</button>
     </details>
-    <details>
-      <summary>Splice in (add funds)</summary>
+    <details class="act-row">
+      <summary><span class="verb">Splice in</span> add funds to the channel</summary>
       <label for="siamt">Amount (sats)</label>
       <input type="number" id="siamt" min="1">
       <button class="act" onclick="spliceIn()">Splice in</button>
     </details>
-    <details>
-      <summary>Splice out (remove funds)</summary>
+    <details class="act-row">
+      <summary><span class="verb">Splice out</span> remove funds from the channel</summary>
       <label for="soamt">Amount (sats)</label>
       <input type="number" id="soamt" min="1">
       <label for="soaddr">Destination address (optional, default: node wallet)</label>
       <input type="text" id="soaddr" spellcheck="false">
       <button class="act" onclick="spliceOut()">Splice out</button>
     </details>
-    <details>
-      <summary>Update forwarding fees / CLTV</summary>
+    <details class="act-row">
+      <summary><span class="verb">Set</span> forwarding fees / CLTV</summary>
       <label for="feeprop">Proportional fee (millionths)</label>
       <input type="number" id="feeprop" min="0">
       <label for="feebase">Base fee (msat)</label>
@@ -286,7 +317,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     </details>
   </div>
 
-  <div class="panel">
+  <div class="panel info-panel">
     <h2>Forwarding stats</h2>
     <div>Tracking mode: <span id="trackmode" class="mono muted">…</span>
       <button class="act secondary" style="margin:0 0 0 10px" onclick="loadStats()">Refresh</button>

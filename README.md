@@ -12,9 +12,9 @@ Shows:
 - **Live activity feed** — node events (payments, channel state changes, splices) as they happen,
   plus an audit trail of control-panel actions
 
-## Control panel
+## Actions panel
 
-With `--enable-actions`, a **Control** page at `/control` can invoke node commands — a curated
+With `--enable-actions`, an **Actions** page at `/control` can invoke node commands — a curated
 subset of what `ldk-server-cli` can do:
 
 - **Payments** — pay BOLT11 invoices, BOLT12 offers, keysend (spontaneous) payments
