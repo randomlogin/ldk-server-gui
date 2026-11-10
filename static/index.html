@@ -69,13 +69,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.failed td { opacity: .55; }
 .who .sub { display: block; color: var(--muted); font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The liquidity bar of a channel: outbound (orange, what can be sent), inbound (blue, what can be
-   received), and the rest in grey (the reserves, fees and payments in flight). */
+   received), and the rest hatched (the reserves, fees and payments in flight). */
 .liq { width: 170px; }
-.liqbar { display: flex; height: 8px; background: #2a3243; border-radius: 4px; overflow: hidden; }
+.liqbar { display: flex; height: 9px; background: #07090e; border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px #3a4357; }
 .liqbar .out { background: var(--accent); }
 .liqbar .in { background: var(--blue); }
+.liqbar .rest { background: repeating-linear-gradient(135deg, #8a93a5 0 2px, #3f485b 2px 4px); }
 .liqlabel { display: flex; justify-content: space-between; margin-top: 3px; font-size: 11px; font-variant-numeric: tabular-nums; }
-.key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: #2a3243; }
+.key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .key.out, .liqlabel .o { color: var(--accent); }
 .key.out { background: var(--accent); }
 .key.in, .liqlabel .i { color: var(--blue); }
@@ -131,10 +132,6 @@ button.copy:hover { color: var(--accent2); }
 <div class="grid" style="margin-top:14px">
   <div class="panel">
     <h2>Channels <span id="chcount" class="badge"></span></h2>
-    <div class="muted" style="font-size:12px;margin:-4px 0 8px">The bar shows how the channel's capacity is split:
-      <span class="key out"></span><b>outbound</b>, what you can send;
-      <span class="key in"></span><b>inbound</b>, what you can receive;
-      <span class="key"></span>grey, reserves, fees and payments in flight.</div>
     <div class="scroll">
     <table id="channels">
       <thead><tr>
@@ -353,7 +350,7 @@ function spliceCell(c) {
 }
 
 // How a channel's capacity is split, as a bar: outbound (what can be sent) from the left, inbound
-// (what can be received) after it, the rest grey (the reserves, fees and payments in flight), with the
+// (what can be received) after it, the rest hatched (the reserves, fees and payments in flight), with the
 // shares written under it and the amounts on hover.
 function liquidityCell(c) {
   const capacity = (c.channel_value_sats || 0) * 1000;
@@ -364,9 +361,9 @@ function liquidityCell(c) {
   const rest = Math.max(0, capacity - out - inbound);
   const tip = `Outbound: ${fmtMsatAsSats(out)} (${outShare.toFixed(0)}%), what you can send\n` +
     `Inbound: ${fmtMsatAsSats(inbound)} (${inShare.toFixed(0)}%), what you can receive\n` +
-    `Reserves, fees and payments in flight: ${fmtMsatAsSats(rest)}`;
+    `Hatched, reserves, fees and payments in flight: ${fmtMsatAsSats(rest)}`;
   return `<td class="liq" data-sort="${outShare.toFixed(1)}" title="${esc(tip)}">
-    <div class="liqbar"><div class="out" style="width:${outShare.toFixed(1)}%"></div><div class="in" style="width:${inShare.toFixed(1)}%"></div></div>
+    <div class="liqbar"><div class="out" style="width:${outShare.toFixed(1)}%"></div><div class="in" style="width:${inShare.toFixed(1)}%"></div><div class="rest" style="width:${(100 - outShare - inShare).toFixed(1)}%"></div></div>
     <div class="liqlabel"><span class="o">${outShare.toFixed(0)}% out</span><span class="i">${inShare.toFixed(0)}% in</span></div></td>`;
 }
 
