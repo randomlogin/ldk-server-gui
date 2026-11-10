@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LDK Node Dashboard</title>
+<script src="/common.js"></script>
 <style>
 :root {
   --bg: #0b0e14;
@@ -159,7 +160,7 @@ button.copy:hover { color: var(--accent2); }
 <footer>ldk-server-gui · auto-refreshes on node events</footer>
 
 <script>
-const fmtSats = v => v == null ? "—" : Math.round(v).toLocaleString("en-US") + " sat";
+const fmtSats = v => v == null ? "—" : fmtInt(v) + " sat";
 const fmtMsatAsSats = v => v == null ? "—" : fmtSats(Math.floor(v / 1000));
 const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString() : "—";
 const ago = ts => {
@@ -274,7 +275,7 @@ function renderNode(n) {
   el.innerHTML = `
     <div>Alias</div><div>${esc(n.node_alias || "—")}</div>
     <div>Node ID</div><div class="mono" style="word-break:break-all">${esc(n.node_id)} ${copyBtn(n.node_id)}</div>
-    <div>Chain tip</div><div class="mono">${bb.height ?? "—"} ${idSpan(bb.block_hash, "mono muted")}</div>
+    <div>Chain tip</div><div class="mono">${bb.height == null ? "—" : fmtInt(bb.height)} ${idSpan(bb.block_hash, "mono muted")}</div>
     <div>On-chain synced</div><div>${ago(n.latest_onchain_wallet_sync_timestamp)}</div>
     <div>Lightning synced</div><div>${ago(n.latest_lightning_wallet_sync_timestamp)}</div>
     <div>Fee cache updated</div><div>${ago(n.latest_fee_rate_cache_update_timestamp)}</div>

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LDK Node Control</title>
+<script src="/common.js"></script>
 <style>
 :root {
   --bg: #0b0e14;
@@ -313,7 +314,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
 
 <script>
 const TOKEN_KEY = "ldk-action-token";
-const fmtSats = v => v == null ? "—" : Math.round(v).toLocaleString("en-US") + " sat";
+const fmtSats = v => v == null ? "—" : fmtInt(v) + " sat";
 const fmtMsatAsSats = v => v == null ? "—" : fmtSats(Math.floor(v / 1000));
 const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString() : "—";
 const short = h => h ? String(h).slice(0, 10) + "…" + String(h).slice(-6) : "—";
@@ -657,7 +658,7 @@ async function sendKeysend() {
   if (need(nodeId.length === 66 && isHex(nodeId), "Enter a valid node ID (66 hex chars).")) return;
   const amountMsat = num("ksamt");
   if (need(amountMsat && amountMsat > 0, "Enter an amount in sats.")) return;
-  if (!confirm(`Keysend ${amountMsat.toLocaleString()} sat to ${short(nodeId)}?`)) return;
+  if (!confirm(`Keysend ${fmtInt(amountMsat)} sat to ${short(nodeId)}?`)) return;
   await action("/api/actions/spontaneous-send", { node_id: nodeId, amount_msat: amountMsat * 1000 });
 }
 async function createInvoice() {
@@ -687,7 +688,7 @@ async function sendOnchain() {
   const all = document.getElementById("osall").checked;
   const amountSats = num("osamt");
   if (need(all || (amountSats && amountSats > 0), "Enter an amount or check 'send all funds'.")) return;
-  if (!confirm(`Send ${all ? "ALL FUNDS" : amountSats.toLocaleString() + " sat"} on-chain to ${short(address)}?`)) return;
+  if (!confirm(`Send ${all ? "ALL FUNDS" : fmtInt(amountSats) + " sat"} on-chain to ${short(address)}?`)) return;
   await action("/api/actions/onchain-send",
     { address, amount_sats: all ? null : amountSats, all_funds: all, fee_rate_sat_per_vb: num("osfee") });
 }
@@ -702,7 +703,7 @@ async function openChannel() {
   if (need(address.includes(":"), "Missing or invalid host:port after '@'.")) return;
   if (need(amountSats && amountSats > 0, "Enter the channel size in sats.")) return;
   const pushMsat = num("ocpush");
-  if (!confirm(`Open a ${amountSats.toLocaleString()} sat channel to ${short(node)}@${address}?`)) return;
+  if (!confirm(`Open a ${fmtInt(amountSats)} sat channel to ${short(node)}@${address}?`)) return;
   await action("/api/actions/open-channel", {
     node_pubkey: node, address, amount_sats: amountSats,
     push_to_counterparty_msat: pushMsat ? pushMsat * 1000 : null,
@@ -729,7 +730,7 @@ async function spliceIn() {
   if (!c) { showBanner("No channel selected."); return; }
   const amountSats = num("siamt");
   if (need(amountSats && amountSats > 0, "Enter the splice-in amount in sats.")) return;
-  if (!confirm(`Splice ${amountSats.toLocaleString()} sat INTO the channel with ${short(c.counterparty_node_id)}?`)) return;
+  if (!confirm(`Splice ${fmtInt(amountSats)} sat INTO the channel with ${short(c.counterparty_node_id)}?`)) return;
   await action("/api/actions/splice-in", {
     user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
     splice_amount_sats: amountSats });
@@ -739,7 +740,7 @@ async function spliceOut() {
   if (!c) { showBanner("No channel selected."); return; }
   const amountSats = num("soamt");
   if (need(amountSats && amountSats > 0, "Enter the splice-out amount in sats.")) return;
-  if (!confirm(`Splice ${amountSats.toLocaleString()} sat OUT of the channel with ${short(c.counterparty_node_id)}?`)) return;
+  if (!confirm(`Splice ${fmtInt(amountSats)} sat OUT of the channel with ${short(c.counterparty_node_id)}?`)) return;
   await action("/api/actions/splice-out", {
     user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
     address: val("soaddr") || null, splice_amount_sats: amountSats });

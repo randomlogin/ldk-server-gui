@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Resources</title>
+<script src="/common.js"></script>
 <style>
 :root {
   --bg: #0b0e14;
@@ -172,8 +173,8 @@ function renderNet(resp) {
     card("Chain source uptime", fmtUptime(s.uptime_seconds), "kyoto, starts over if it restarts") +
     card("Received", fmtBytes(s.bytes_received), rxRate) +
     card("Sent", fmtBytes(s.bytes_sent), txRate) +
-    card("Messages in", s.messages_received.toLocaleString()) +
-    card("Messages out", s.messages_sent.toLocaleString());
+    card("Messages in", fmtInt(s.messages_received)) +
+    card("Messages out", fmtInt(s.messages_sent));
 }
 
 async function refresh() {

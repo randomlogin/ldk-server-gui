@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -37,6 +37,7 @@ const INDEX_HTML: &str = include_str!("../static/index.html");
 const KYOTO_HTML: &str = include_str!("../static/kyoto.html");
 const RESOURCES_HTML: &str = include_str!("../static/resources.html");
 const CONTROL_HTML: &str = include_str!("../static/control.html");
+const COMMON_JS: &str = include_str!("../static/common.js");
 const EVENT_BUFFER_CAP: usize = 200;
 
 // What the dashboard itself was built from, as `version|branch|commit|dirty`. Written by build.rs.
@@ -409,6 +410,7 @@ async fn main() {
 
 	let app = Router::new()
 		.route("/", get(index))
+		.route("/common.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], COMMON_JS) }))
 		.route("/api/versions", get(api_versions))
 		.route("/api/snapshot", get(api_snapshot))
 		.route("/api/activity", get(api_activity))

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kyoto Chain Source</title>
+<script src="/common.js"></script>
 <style>
 :root {
   --bg: #0b0e14;
@@ -174,13 +175,13 @@ function renderCbf(section) {
   const matchRate = n("filters_received")
     ? `${(100 * n("filters_matched") / n("filters_received")).toFixed(2)}% of received` : "";
   $("cbf-cards").innerHTML =
-    card("Filters received", n("filters_received").toLocaleString(), "checked against watched scripts") +
-    card("Filters matched", n("filters_matched").toLocaleString(), matchRate) +
-    card("Blocks requested", n("blocks_requested").toLocaleString(), "incl. retries and fee estimation") +
-    card("Blocks downloaded", n("blocks_downloaded").toLocaleString(),
-         `${n("matched_blocks_downloaded").toLocaleString()} for matched filters`) +
-    card("Scripts watched", (n("wallet_scripts") + n("ldk_scripts")).toLocaleString(),
-         `wallet ${n("wallet_scripts").toLocaleString()} · LDK ${n("ldk_scripts").toLocaleString()}`);
+    card("Filters received", fmtInt(n("filters_received")), "checked against watched scripts") +
+    card("Filters matched", fmtInt(n("filters_matched")), matchRate) +
+    card("Blocks requested", fmtInt(n("blocks_requested")), "incl. retries and fee estimation") +
+    card("Blocks downloaded", fmtInt(n("blocks_downloaded")),
+         `${fmtInt(n("matched_blocks_downloaded"))} for matched filters`) +
+    card("Scripts watched", fmtInt(n("wallet_scripts") + n("ldk_scripts")),
+         `wallet ${fmtInt(n("wallet_scripts"))} · LDK ${fmtInt(n("ldk_scripts"))}`);
 }
 
 // Connections that ended, newest first, with why. kyoto keeps the last 200.
@@ -263,15 +264,15 @@ function renderKyoto(resp) {
   $("cards").innerHTML =
     card("Chain source uptime", fmtUptime(s.uptime_seconds), "kyoto, starts over if it restarts") +
     card("Connected peers", s.connected_peers) +
-    card("Chain tip", s.tip_height == null ? "–" : s.tip_height.toLocaleString(), "height of the header chain");
+    card("Chain tip", s.tip_height == null ? "–" : fmtInt(s.tip_height), "height of the header chain");
 
   $("peercount").textContent = s.peers.length;
   $("peerbody").innerHTML = s.peers.length
     ? s.peers.map(p =>
         `<tr><td>${esc(p.addr)}</td><td class="num">${fmtUptime(p.uptime_seconds)}</td>` +
         `<td class="num">${fmtBytes(p.bytes_received)}</td><td class="num">${fmtBytes(p.bytes_sent)}</td>` +
-        `<td class="num">${p.messages_received.toLocaleString()}</td>` +
-        `<td class="num">${p.messages_sent.toLocaleString()}</td></tr>`
+        `<td class="num">${fmtInt(p.messages_received)}</td>` +
+        `<td class="num">${fmtInt(p.messages_sent)}</td></tr>`
       ).join("")
     : `<tr><td colspan="6" class="muted">no peers connected</td></tr>`;
   $("updated").textContent = new Date().toLocaleTimeString();
