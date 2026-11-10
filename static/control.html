@@ -878,11 +878,11 @@ async function loadStats(more) {
   const body = document.getElementById("fwdbody");
   if (!j.ok) { if (!more) body.innerHTML = `<tr><td colspan="5" class="muted">${esc(j.error || "unavailable")}</td></tr>`; return; }
   const rows = (j.forwarded_payments || []).map(p => `<tr>
-    <td class="muted">${fmtTime(p.forwarded_at_timestamp)}</td>
+    <td class="muted" data-sort="${p.forwarded_at_timestamp ?? ""}">${fmtTime(p.forwarded_at_timestamp)}</td>
     <td class="mono muted">${idSpan(p.prev_channel_id, "mono muted")}</td>
     <td class="mono muted">${idSpan(p.next_channel_id, "mono muted")}</td>
-    <td class="num mono">${fmtMsatAsSats(p.outbound_amount_forwarded_msat ?? p.inbound_amount_forwarded_msat)}</td>
-    <td class="num mono">${fmtMsatAsSats(p.total_fee_earned_msat)}</td>
+    <td class="num mono" data-sort="${p.outbound_amount_forwarded_msat ?? p.inbound_amount_forwarded_msat ?? ""}">${fmtMsatAsSats(p.outbound_amount_forwarded_msat ?? p.inbound_amount_forwarded_msat)}</td>
+    <td class="num mono" data-sort="${p.total_fee_earned_msat ?? ""}">${fmtMsatAsSats(p.total_fee_earned_msat)}</td>
   </tr>`);
   if (!more) body.innerHTML = rows.join("") || `<tr><td colspan="5" class="muted">no forwarded payments recorded</td></tr>`;
   else body.insertAdjacentHTML("beforeend", rows.join(""));

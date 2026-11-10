@@ -197,9 +197,10 @@ function renderHistory(section) {
   $("historybody").innerHTML = records.length
     ? records.map(r =>
         `<tr><td>${esc(r.addr)}</td>` +
-        `<td class="num">${new Date(r.connected_at * 1000).toLocaleTimeString()}</td>` +
-        `<td class="num">${fmtUptime(r.lived_seconds)}</td>` +
-        `<td class="num">${fmtBytes(r.bytes_received)}</td><td class="num">${fmtBytes(r.bytes_sent)}</td>` +
+        `<td class="num" data-sort="${r.connected_at}">${new Date(r.connected_at * 1000).toLocaleTimeString()}</td>` +
+        `<td class="num" data-sort="${r.lived_seconds}">${fmtUptime(r.lived_seconds)}</td>` +
+        `<td class="num" data-sort="${r.bytes_received}">${fmtBytes(r.bytes_received)}</td>` +
+        `<td class="num" data-sort="${r.bytes_sent}">${fmtBytes(r.bytes_sent)}</td>` +
         `<td title="${esc(r.reason_kind)}">${esc(r.reason)}</td></tr>`
       ).join("")
     : `<tr><td colspan="6" class="muted">no connection has ended yet</td></tr>`;
@@ -230,7 +231,7 @@ function renderEvents(resp) {
   }
   $("eventbody").innerHTML = events.length
     ? events.slice().reverse().map(e =>
-        `<tr><td>${new Date(e.time).toLocaleString()}</td>` +
+        `<tr><td data-sort="${esc(e.time)}">${new Date(e.time).toLocaleString()}</td>` +
         `<td${e.kind === "gave_up" || e.kind === "start_failed" ? ' style="color:#f66"' : ""}>${esc(EVENT_LABELS[e.kind] || e.kind)}</td>` +
         `<td class="muted" style="word-break:break-word">${esc(e.message)}</td></tr>`
       ).join("")
@@ -269,8 +270,9 @@ function renderKyoto(resp) {
   $("peercount").textContent = s.peers.length;
   $("peerbody").innerHTML = s.peers.length
     ? s.peers.map(p =>
-        `<tr><td>${esc(p.addr)}</td><td class="num">${fmtUptime(p.uptime_seconds)}</td>` +
-        `<td class="num">${fmtBytes(p.bytes_received)}</td><td class="num">${fmtBytes(p.bytes_sent)}</td>` +
+        `<tr><td>${esc(p.addr)}</td><td class="num" data-sort="${p.uptime_seconds}">${fmtUptime(p.uptime_seconds)}</td>` +
+        `<td class="num" data-sort="${p.bytes_received}">${fmtBytes(p.bytes_received)}</td>` +
+        `<td class="num" data-sort="${p.bytes_sent}">${fmtBytes(p.bytes_sent)}</td>` +
         `<td class="num">${fmtInt(p.messages_received)}</td>` +
         `<td class="num">${fmtInt(p.messages_sent)}</td></tr>`
       ).join("")

@@ -311,9 +311,9 @@ function renderChannels(resp) {
       <td>${statusPills(c)}</td>
       <td class="mono">${idSpan(c.counterparty_node_id)}</td>
       <td class="mono muted">${c.short_channel_id ?? "—"}</td>
-      <td class="num mono">${fmtSats(c.channel_value_sats)}</td>
-      <td class="num mono">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
-      <td class="num mono">${fmtMsatAsSats(c.inbound_capacity_msat)}</td>
+      <td class="num mono" data-sort="${c.channel_value_sats ?? ""}">${fmtSats(c.channel_value_sats)}</td>
+      <td class="num mono" data-sort="${c.outbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
+      <td class="num mono" data-sort="${c.inbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.inbound_capacity_msat)}</td>
       <td><div class="liqbar" title="outbound share"><div style="width:${pct.toFixed(1)}%"></div></div></td>
     </tr>`;
   }).join("");
@@ -354,12 +354,12 @@ function renderPayments(resp, openings) {
     const dir = (p.direction || "").toUpperCase();
     const st = (p.status || "").toUpperCase();
     return `<tr title="${esc(p.payment_id)}" ${p.payment_id ? `data-pid="${esc(p.payment_id)}"` : ""}>
-      <td class="muted">${fmtTime(p.latest_update_timestamp)}</td>
+      <td class="muted" data-sort="${p.latest_update_timestamp ?? ""}">${fmtTime(p.latest_update_timestamp)}</td>
       <td>${dir === "INBOUND" ? '<span class="pill green">↓ in</span>' : dir === "OUTBOUND" ? '<span class="pill blue">↑ out</span>' : esc(dir)}</td>
       <td class="mono">${idSpan(p.payment_id)}</td>
       <td>${paymentKind(p, openings)}</td>
-      <td class="num mono">${fmtMsatAsSats(p.amount_msat)}</td>
-      <td class="num mono muted">${p.fee_paid_msat != null ? fmtMsatAsSats(p.fee_paid_msat) : "—"}</td>
+      <td class="num mono" data-sort="${p.amount_msat ?? ""}">${fmtMsatAsSats(p.amount_msat)}</td>
+      <td class="num mono muted" data-sort="${p.fee_paid_msat ?? ""}">${p.fee_paid_msat != null ? fmtMsatAsSats(p.fee_paid_msat) : "—"}</td>
       <td><span class="pill ${pill[st] || "gray"}">${esc(st.toLowerCase() || "?")}</span></td>
     </tr>`;
   }).join("");

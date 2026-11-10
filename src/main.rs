@@ -59,7 +59,7 @@ const VERSIONS_FOOTER: &str = r##"<footer id="build-versions" style="margin-top:
         " · " + esc(c.branch) + " @ " + esc(c.commit) +
         (dirty ? ' <span style="color:var(--accent2,#ffd166)">+uncommitted</span>' : "") + "</span>";
     });
-    if (data.error) parts.push("<span>node build info: " + esc(data.error) + "</span>");
+    if (data.error) parts.push('<span title="' + esc(data.error) + '">node revisions unavailable (hover for why)</span>');
     box.innerHTML = parts.join(" &nbsp;|&nbsp; ");
   }
   function load() {
