@@ -165,6 +165,12 @@ struct Args {
 		help = "Keep the control-panel actions and how they turned out in this file, so the list survives a restart"
 	)]
 	actions_log_file: Option<PathBuf>,
+
+	#[arg(
+		long,
+		help = "Block explorer that transactions link to, e.g. https://mutinynet.com (default: mempool.space for the node's network; none for regtest)"
+	)]
+	explorer_url: Option<String>,
 }
 
 struct AppState {
@@ -196,6 +202,8 @@ struct AppState {
 	actions: std::sync::Mutex<VecDeque<Value>>,
 	next_action_id: AtomicU64,
 	actions_file: Option<PathBuf>,
+	// The block explorer transactions link to, if one was given.
+	explorer_url: Option<String>,
 	// Set when --enable-actions is passed; required as `X-Action-Token` on action POSTs.
 	action_token: Option<Arc<str>>,
 	// Notified by actions to trigger an immediate snapshot refresh.
@@ -346,6 +354,7 @@ async fn main() {
 		actions: std::sync::Mutex::new(actions),
 		next_action_id: AtomicU64::new(next_action_id),
 		actions_file: args.actions_log_file.clone(),
+		explorer_url: args.explorer_url.clone(),
 		action_token,
 		refresh: Arc::clone(&refresh),
 		index_html,
@@ -371,6 +380,7 @@ async fn main() {
 				}
 				snap["aliases"] = state.aliases_json();
 				snap["announced"] = state.announced_features_json();
+				snap["explorer"] = json!(state.explorer_url);
 				let msg = Arc::<str>::from(snap.to_string());
 				*state.snapshot.write().await = Arc::clone(&msg);
 				let _ = state.tx.send(wrap("snapshot", &msg));
@@ -804,12 +814,19 @@ fn payment_failure_text(code: u64) -> &'static str {
 	}
 }
 
+// The transaction ID in an outpoint ("<txid>:<vout>") or in a bare ID, if it is one.
+fn txid_of(outpoint: &str) -> Option<String> {
+	let txid = outpoint.split(':').next()?;
+	(txid.len() == 64 && txid.bytes().all(|b| b.is_ascii_hexdigit())).then(|| txid.to_ascii_lowercase())
+}
+
 // Settles the actions of `kind` that are still in flight ("sent" or "pending") and name `reference`
 // (a channel's user_channel_id, or a payment id): sets their status and detail. Returns the records
-// that changed. An action that already finished is never touched: a channel opened last week and
+// that changed, with `txid` set on them when there is one. An action that already finished is never touched: a channel opened last week and
 // closed today does not turn that open into a failure.
 fn settle_in(
-	actions: &mut VecDeque<Value>, reference: &str, kind: &str, status: &str, detail: &str, now: u64,
+	actions: &mut VecDeque<Value>, reference: &str, kind: &str, status: &str, detail: &str,
+	txid: Option<&str>, now: u64,
 ) -> Vec<Value> {
 	let mut changed = Vec::new();
 	if reference.is_empty() {
@@ -822,6 +839,9 @@ fn settle_in(
 			record["status"] = json!(status);
 			record["detail"] = json!(detail);
 			record["updated"] = json!(now);
+			if let Some(txid) = txid {
+				record["txid"] = json!(txid);
+			}
 			changed.push(record.clone());
 		}
 	}
@@ -837,41 +857,43 @@ fn apply_event_to(actions: &mut VecDeque<Value>, envelope: &Value, now: u64) -> 
 		let id = c["user_channel_id"].as_str().unwrap_or_default();
 		let why = c["reason"]["message"].as_str().map(str::to_string);
 		match c["state"].as_u64() {
-			Some(1) => changed.extend(settle_in(
-				actions, id, "open", "pending",
-				&format!(
-					"the peer accepted: funding transaction {} is waiting for confirmations",
-					c["funding_txo"].as_str().unwrap_or("?")
-				),
-				now,
-			)),
-			Some(2) => changed.extend(settle_in(actions, id, "open", "done", "channel ready", now)),
+			Some(1) => {
+				let funding = c["funding_txo"].as_str().and_then(txid_of);
+				changed.extend(settle_in(
+					actions, id, "open", "pending",
+					"the peer accepted: the funding transaction is waiting for confirmations",
+					funding.as_deref(), now,
+				));
+			},
+			Some(2) => changed.extend(settle_in(actions, id, "open", "done", "channel ready", None, now)),
 			Some(3) | Some(4) => {
 				let why = why.unwrap_or_else(|| "the channel was closed".to_string());
-				changed.extend(settle_in(actions, id, "open", "failed", &why, now));
-				changed.extend(settle_in(actions, id, "close", "done", &format!("channel closed: {why}"), now));
+				changed.extend(settle_in(actions, id, "open", "failed", &why, None, now));
+				changed.extend(settle_in(actions, id, "close", "done", &format!("channel closed: {why}"), None, now));
 			},
 			_ => {},
 		}
 	}
 	if let Some(c) = event.get("splice_negotiated") {
 		let id = c["user_channel_id"].as_str().unwrap_or_default();
+		let funding = c["new_funding_txo"].as_str().and_then(txid_of);
 		changed.extend(settle_in(
-			actions, id, "splice", "done", "splice negotiated: its funding transaction is waiting for confirmations", now,
+			actions, id, "splice", "done", "splice negotiated: its funding transaction is waiting for confirmations",
+			funding.as_deref(), now,
 		));
 	}
 	if let Some(c) = event.get("splice_negotiation_failed") {
 		let id = c["user_channel_id"].as_str().unwrap_or_default();
-		changed.extend(settle_in(actions, id, "splice", "failed", "the splice negotiation failed", now));
+		changed.extend(settle_in(actions, id, "splice", "failed", "the splice negotiation failed", None, now));
 	}
 	if let Some(p) = event.get("payment_successful") {
 		let id = p["payment_id"].as_str().unwrap_or_default();
-		changed.extend(settle_in(actions, id, "payment", "done", "payment sent", now));
+		changed.extend(settle_in(actions, id, "payment", "done", "payment sent", None, now));
 	}
 	if let Some(p) = event.get("payment_failed") {
 		let id = p["payment_id"].as_str().unwrap_or_default();
 		let why = p["reason"].as_u64().map(payment_failure_text).unwrap_or("the payment failed");
-		changed.extend(settle_in(actions, id, "payment", "failed", why, now));
+		changed.extend(settle_in(actions, id, "payment", "failed", why, None, now));
 	}
 	changed
 }
@@ -1114,7 +1136,10 @@ impl AppState {
 	// follows later (a channel opening, a payment) "sent" means the node accepted the request, and an
 	// event settles it afterwards; an answer that was an error is a failure, with the node's log lines
 	// from the moment it was refused.
-	fn record_action(&self, summary: &str, refs: Vec<String>, answer: Result<(), String>, log: Vec<String>) {
+	fn record_action(
+		&self, summary: &str, refs: Vec<String>, answer: Result<(), String>, log: Vec<String>,
+		txid: Option<String>,
+	) {
 		let kind = action_kind(summary);
 		let (status, detail) = match answer {
 			Ok(()) if kind == "other" => ("done", "done".to_string()),
@@ -1124,7 +1149,7 @@ impl AppState {
 		let now = now_unix();
 		let record = json!({
 			"id": self.next_action_id.fetch_add(1, Ordering::Relaxed), "kind": kind, "at": now, "updated": now,
-			"summary": summary, "status": status, "detail": detail, "log": log, "refs": refs,
+			"summary": summary, "status": status, "detail": detail, "log": log, "refs": refs, "txid": txid,
 		});
 		{
 			let mut actions = self.actions.lock().expect("actions lock poisoned");
@@ -1587,14 +1612,14 @@ mod tests {
 		]);
 		let channel = |id: &str, state: u64, message: Option<&str>| {
 			json!({ "event": { "channel_state_changed": {
-				"user_channel_id": id, "state": state, "funding_txo": "tx:0",
+				"user_channel_id": id, "state": state, "funding_txo": format!("{}:0", "ab".repeat(32)),
 				"reason": message.map(|m| json!({ "message": m })),
 			} } })
 		};
 		// The peer accepts: pending, then ready.
 		assert_eq!(apply_event_to(&mut actions, &channel("chan-1", 1, None), 10).len(), 1);
 		assert_eq!(actions[0]["status"], "pending");
-		assert!(actions[0]["detail"].as_str().unwrap().contains("tx:0"));
+		assert_eq!(actions[0]["txid"], "ab".repeat(32));
 		assert_eq!(apply_event_to(&mut actions, &channel("chan-1", 2, None), 11).len(), 1);
 		assert_eq!(actions[0]["status"], "done");
 		// Closing a channel that was opened and finished earlier settles the close and not the open.
@@ -1606,6 +1631,12 @@ mod tests {
 		let failed = json!({ "event": { "payment_failed": { "payment_id": "pay-1", "reason": 5 } } });
 		assert_eq!(apply_event_to(&mut actions, &failed, 13).len(), 1);
 		assert_eq!((actions[3]["status"].as_str(), actions[3]["detail"].as_str()), (Some("failed"), Some("no route was found")));
+		let negotiated = json!({ "event": { "splice_negotiated": {
+			"user_channel_id": "chan-8", "new_funding_txo": format!("{}:1", "CD".repeat(32)),
+		} } });
+		actions.push_back(record(6, "splice", "sent", "chan-8"));
+		assert_eq!(apply_event_to(&mut actions, &negotiated, 13).len(), 1);
+		assert_eq!((actions[5]["status"].as_str(), actions[5]["txid"].as_str()), (Some("done"), Some("cd".repeat(32).as_str())));
 		let splice = json!({ "event": { "splice_negotiation_failed": { "user_channel_id": "chan-9" } } });
 		assert_eq!(apply_event_to(&mut actions, &splice, 14).len(), 1);
 		assert_eq!(actions[4]["status"], "failed");
@@ -1639,6 +1670,9 @@ mod tests {
 		assert_eq!(action_kind("force-close channel x"), "close");
 		assert_eq!(action_kind("keysend 5 msat → x"), "payment");
 		assert_eq!(action_kind("connect peer x"), "other");
+		assert_eq!(txid_of(&format!("{}:3", "0F".repeat(32))), Some("0f".repeat(32)));
+		assert_eq!(txid_of(&"a".repeat(64)), Some("a".repeat(64)));
+		assert_eq!((txid_of("abc:0"), txid_of(""), txid_of(&"g".repeat(64))), (None, None, None));
 		std::fs::remove_dir_all(&dir).unwrap();
 	}
 

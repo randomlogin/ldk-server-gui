@@ -61,6 +61,16 @@ not running cannot settle anything.
 The node's events also fill the activity feed on the main page, which now shows a channel's state,
 its peer and the reason it was closed.
 
+## Transactions
+
+A transaction is shown as a link to a block explorer wherever one is listed: the funding transaction of
+a channel that is opening or being spliced (also while it waits for confirmations), the transaction of
+an on-chain payment or send, and a channel's funding transaction in the channels table. The explorer is
+`--explorer-url` (for Mutinynet: `--explorer-url https://mutinynet.com`); without it the dashboard uses
+mempool.space for the node's network (`/signet` for signet, which is not Mutinynet, a custom signet),
+and shows the ID without a link for regtest. Only `http(s)` addresses are used. The copy button next
+to a link copies the full transaction ID.
+
 ## Who a payment went to
 
 The node records no destination for a Lightning payment, and the payer of a BOLT11 payment is

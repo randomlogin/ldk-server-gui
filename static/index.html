@@ -349,7 +349,7 @@ function renderChannels(resp) {
     return `<tr>
       <td>${statusPills(c)}</td>
       <td class="mono" data-sort="${esc(nodeAlias(c.counterparty_node_id) || c.counterparty_node_id)}">${nodeSpan(c.counterparty_node_id)}</td>
-      <td class="mono muted">${c.short_channel_id ?? "—"}</td>
+      <td class="mono muted">${c.short_channel_id ?? "—"}${c.funding_txo && c.funding_txo.txid ? `<div style="font-size:11px" title="the channel's funding transaction">${txLink(c.funding_txo.txid)}</div>` : ""}</td>
       <td class="num mono" data-sort="${c.channel_value_sats ?? ""}">${fmtSats(c.channel_value_sats)}</td>
       <td class="num mono" data-sort="${c.outbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
       <td class="num mono" data-sort="${c.inbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.inbound_capacity_msat)}</td>
@@ -380,6 +380,13 @@ function paymentKind(p, openings) {
     }
   }
   return `<span class="pill purple">${esc(key.replace(/_/g, " "))}</span>`;
+}
+
+// The transaction of an on-chain payment.
+function onchainTxid(p) {
+  const kind = p.kind || {};
+  const inner = kind.kind || kind;
+  return (inner.onchain && inner.onchain.txid) || null;
 }
 
 // A node ID found anywhere in an object: the counterparty of the channel an on-chain transaction
@@ -446,7 +453,7 @@ function renderPayments(resp, openings, dests) {
       <td class="num mono ${dir === "INBOUND" ? "amt-in" : ""}" data-sort="${p.amount_msat ?? ""}">${p.amount_msat == null ? "—" : sign + fmtMsatAsSats(p.amount_msat)}</td>
       <td class="num mono muted" data-sort="${p.fee_paid_msat ?? ""}">${p.fee_paid_msat != null ? fmtMsatAsSats(p.fee_paid_msat) : "—"}</td>
       <td><span class="pill ${pill[st] || "gray"}">${esc(st.toLowerCase() || "?")}</span></td>
-      <td class="mono muted">${idSpan(p.payment_id)}</td>
+      <td class="mono muted">${onchainTxid(p) ? txLink(onchainTxid(p)) : idSpan(p.payment_id)}</td>
     </tr>`;
   }).join("");
 }
@@ -470,6 +477,7 @@ function renderPeers(resp) {
 function render(snap) {
   setNodeAliases(snap.aliases);
   setPeerFeatures(snap);
+  setExplorer(snap.explorer, snap.node && snap.node.network);
   document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
   if (!snap.ok) setConn(false, "node unreachable");
   else setConn(true, "live");
@@ -499,7 +507,8 @@ function channelEventText(d) {
   const icon = state === "ready" ? "✅" : state === "pending" ? "⏳" : state === "open failed" || state === "closed" ? "❌" : "⚙️";
   const peer = d.counterparty_node_id ? " with " + esc(nodeName(d.counterparty_node_id)) : "";
   const why = d.reason && d.reason.message ? " — " + esc(withSats(d.reason.message)) : "";
-  return `${icon} channel ${esc(state)}${peer}${why}`;
+  const tx = d.funding_txo && state === "pending" ? " · funding tx " + txLink(d.funding_txo) : "";
+  return `${icon} channel ${esc(state)}${peer}${why}${tx}`;
 }
 
 function eventSummary(e) {
@@ -514,7 +523,7 @@ function eventSummary(e) {
     payment_forwarded: "🔁 payment forwarded" + (d.total_fee_earned_msat != null ? " · fee " + fmtMsatAsSats(d.total_fee_earned_msat) : ""),
     payment_claimable: "⏳ payment claimable" + (d.claimable_amount_msat != null ? " " + fmtMsatAsSats(d.claimable_amount_msat) : ""),
     channel_state_changed: channelEventText(d),
-    splice_negotiated: "🔀 splice negotiated " + idSpan(d.channel_id),
+    splice_negotiated: "🔀 splice negotiated " + idSpan(d.channel_id) + (d.new_funding_txo ? " · funding tx " + txLink(d.new_funding_txo) : ""),
     splice_negotiation_failed: "🔀 splice failed " + idSpan(d.channel_id) + (d.counterparty_node_id ? " with " + esc(nodeName(d.counterparty_node_id)) : ""),
     action: "🖱️ action: " + esc(d.summary || ""),
     unknown: "event"

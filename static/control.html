@@ -538,7 +538,7 @@ async function loadRecentActions() {
       <td class="muted" data-sort="${r.at}" title="asked ${esc(fmtTime(r.at))}${settled}">${ago(r.at)}</td>
       <td>${esc(r.summary)}</td>
       <td data-sort="${esc(r.status)}"><span class="pill ${color}">${esc(label)}</span></td>
-      <td style="word-break:break-word">${esc(withSats(r.detail))}${log}</td>
+      <td style="word-break:break-word">${esc(withSats(r.detail))}${r.txid ? " · tx " + txLink(r.txid) : ""}${log}</td>
     </tr>`;
   }).join("") : `<tr><td colspan="4" class="muted">no action yet</td></tr>`;
 }
@@ -580,6 +580,9 @@ function showResult(j) {
   // One row per field. A text value (an invoice, a hash, an address) sits in its own block that is
   // selected whole with one click, and has a copy button. Anything else is shown as JSON.
   const rows = Object.entries(j).filter(([key]) => key !== "ok").map(([key, value]) => {
+    if (typeof value === "string" && /^[0-9a-f]{64}(:\d+)?$/i.test(value) && /txid|txo/.test(key)) {
+      return `<div class="resrow"><div class="reskey">${esc(key)}</div><div class="bigout">${txLink(value)}</div></div>`;
+    }
     if (typeof value === "string") {
       return `<div class="resrow"><div class="reskey">${esc(key)}</div>` +
         `<div class="bigout"><span class="selall">${esc(value)}</span> ${copyBtn(value)}</div></div>`;
@@ -917,6 +920,7 @@ function renderPeerPickers(peers) {
 function renderSnapshot(snap) {
   setNodeAliases(snap.aliases);
   setPeerFeatures(snap);
+  setExplorer(snap.explorer, snap.node && snap.node.network);
   const chans = (snap.channels && !snap.channels.error && snap.channels.channels) || [];
   channelsById = {};
   chans.forEach(c => { channelsById[c.user_channel_id] = c; });

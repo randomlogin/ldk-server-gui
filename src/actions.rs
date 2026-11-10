@@ -97,14 +97,14 @@ where
 			let (kind, node_id, label) = destination;
 			let id = payment_id(&resp);
 			state.remember_destination(&id, kind, node_id, label);
-			state.record_action(&summary, vec![id], Ok(()), Vec::new());
+			state.record_action(&summary, vec![id], Ok(()), Vec::new(), None);
 			state.refresh.notify_one();
 			state.log_action(summary).await;
 			ok_json(&resp)
 		},
 		Err(e) => {
 			let log = state.log_problems_since(started).await;
-			state.record_action(&summary, Vec::new(), Err(e.to_string()), log);
+			state.record_action(&summary, Vec::new(), Err(e.to_string()), log, None);
 			err_json(StatusCode::BAD_GATEWAY, e)
 		},
 	}
@@ -137,14 +137,15 @@ where
 					refs.push(id.to_string());
 				}
 			}
-			state.record_action(&summary, refs, Ok(()), Vec::new());
+			let txid = answer["txid"].as_str().map(str::to_string);
+			state.record_action(&summary, refs, Ok(()), Vec::new(), txid);
 			state.refresh.notify_one();
 			state.log_action(summary).await;
 			ok_json(&resp)
 		},
 		Err(e) => {
 			let log = state.log_problems_since(started).await;
-			state.record_action(&summary, refs, Err(e.to_string()), log);
+			state.record_action(&summary, refs, Err(e.to_string()), log, None);
 			err_json(StatusCode::BAD_GATEWAY, e)
 		},
 	}

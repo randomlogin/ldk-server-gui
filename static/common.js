@@ -33,7 +33,8 @@ function fmtInt(n) {
     "details.featlist>summary:hover,details.featlist[open]>summary{color:var(--text)}" +
     // The copy button has a fixed height, so what is inside it cannot make its line taller.
     "button.copy{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;line-height:1;height:1.15em;min-width:1.6em;padding:0 3px}" +
-    "button.copy svg{width:11px;height:11px}";
+    "button.copy svg{width:11px;height:11px}" +
+    "a.tx{text-decoration:underline dotted}";
 
   function cellKey(row, col) {
     var cell = row.cells[col];
@@ -427,4 +428,30 @@ function withSats(text) {
   return String(text == null ? "" : text).replace(/\b(\d+\.\d{8}) BTC\b/g, function (whole, btc) {
     return whole + " (" + fmtInt(Math.round(parseFloat(btc) * 1e8)) + " sat)";
   });
+}
+
+// Transactions as links to a block explorer. The explorer comes from --explorer-url, else it is the
+// one for the node's network; there is none for regtest, and then a transaction is shown without a link.
+var explorerBase = "";
+var EXPLORERS = {
+  bitcoin: "https://mempool.space", signet: "https://mempool.space/signet",
+  testnet: "https://mempool.space/testnet", testnet4: "https://mempool.space/testnet4",
+};
+function setExplorer(configured, network) {
+  var base = configured || EXPLORERS[String(network || "").toLowerCase()] || "";
+  explorerBase = /^https?:\/\/[^\s"'<>]+$/.test(base) ? base.replace(/\/+$/, "") : "";
+}
+
+// A transaction as HTML, from its ID or an outpoint ("<txid>:<vout>"): the shortened ID as a link to
+// the explorer (the full ID in the tooltip) and a copy button for the ID. Needs the page's esc(),
+// short() and copyBtn().
+function txLink(tx) {
+  var m = /^([0-9a-fA-F]{64})(?::(\d+))?$/.exec(String(tx || ""));
+  if (!m) return tx ? esc(tx) : "—";
+  var txid = m[1].toLowerCase();
+  var label = esc(short(txid) + (m[2] !== undefined ? ":" + m[2] : ""));
+  var shown = explorerBase
+    ? '<a class="tx mono" href="' + esc(explorerBase + "/tx/" + txid) + '" target="_blank" rel="noopener" title="' + esc(txid) + ' (open in the explorer)">' + label + "</a>"
+    : '<span class="mono" title="' + esc(txid) + '">' + label + "</span>";
+  return shown + copyBtn(txid);
 }
