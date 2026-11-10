@@ -485,19 +485,37 @@ function render(snap) {
 }
 
 // activity feed
+// The numbers the node uses in its events: a channel's state, and why a payment failed.
+const CHANNEL_STATES = { 1: "pending", 2: "ready", 3: "open failed", 4: "closed" };
+const PAYMENT_FAILURES = {
+  1: "the recipient rejected it", 2: "abandoned", 3: "retries exhausted", 4: "expired", 5: "no route found",
+  6: "unexpected error", 7: "unknown required features", 8: "invoice request expired",
+  9: "invoice request rejected", 10: "blinded path creation failed",
+};
+function channelEventText(d) {
+  const state = typeof d.state === "number"
+    ? (CHANNEL_STATES[d.state] || "changed")
+    : String(d.state || "changed").replace(/^CHANNEL_STATE_/, "").toLowerCase().replace(/_/g, " ");
+  const icon = state === "ready" ? "✅" : state === "pending" ? "⏳" : state === "open failed" || state === "closed" ? "❌" : "⚙️";
+  const peer = d.counterparty_node_id ? " with " + esc(nodeName(d.counterparty_node_id)) : "";
+  const why = d.reason && d.reason.message ? " — " + esc(d.reason.message) : "";
+  return `${icon} channel ${esc(state)}${peer}${why}`;
+}
+
 function eventSummary(e) {
-  const d = (e.data && e.data[e.kind]) || e.data || {};
+  // The node's event is {event: {<kind>: {...}}}.
+  const d = (e.data && e.data.event && e.data.event[e.kind]) || (e.data && e.data[e.kind]) || e.data || {};
   const pay = d.payment;
   const amt = pay && pay.amount_msat != null ? " " + fmtMsatAsSats(pay.amount_msat) : "";
   const labels = {
     payment_received: "📥 payment received" + amt,
     payment_successful: "✅ payment sent" + amt,
-    payment_failed: "❌ payment failed" + amt,
+    payment_failed: "❌ payment failed" + amt + (PAYMENT_FAILURES[d.reason] ? " — " + PAYMENT_FAILURES[d.reason] : ""),
     payment_forwarded: "🔁 payment forwarded" + (d.total_fee_earned_msat != null ? " · fee " + fmtMsatAsSats(d.total_fee_earned_msat) : ""),
     payment_claimable: "⏳ payment claimable" + (d.claimable_amount_msat != null ? " " + fmtMsatAsSats(d.claimable_amount_msat) : ""),
-    channel_state_changed: "⚙️ channel " + idSpan(d.channel_id) + " → " + esc(String(d.state ?? "?").replace(/^CHANNEL_STATE_/, "").toLowerCase()),
+    channel_state_changed: channelEventText(d),
     splice_negotiated: "🔀 splice negotiated " + idSpan(d.channel_id),
-    splice_negotiation_failed: "🔀 splice failed " + idSpan(d.channel_id),
+    splice_negotiation_failed: "🔀 splice failed " + idSpan(d.channel_id) + (d.counterparty_node_id ? " with " + esc(nodeName(d.counterparty_node_id)) : ""),
     action: "🖱️ action: " + esc(d.summary || ""),
     unknown: "event"
   };

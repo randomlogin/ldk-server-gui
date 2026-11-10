@@ -28,7 +28,7 @@ use ldk_server_client::DEFAULT_EXPIRY_SECS;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{AppState, CONTROL_HTML};
+use crate::{now_unix, AppState, CONTROL_HTML};
 
 pub async fn control_page(State(state): State<Arc<AppState>>) -> Response {
 	if state.action_token.is_some() {
@@ -91,15 +91,22 @@ where
 	F: Future<Output = Result<T, LdkServerError>>,
 	T: serde::Serialize,
 {
+	let started = now_unix();
 	match fut.await {
 		Ok(resp) => {
 			let (kind, node_id, label) = destination;
-			state.remember_destination(&payment_id(&resp), kind, node_id, label);
+			let id = payment_id(&resp);
+			state.remember_destination(&id, kind, node_id, label);
+			state.record_action(&summary, vec![id], Ok(()), Vec::new());
 			state.refresh.notify_one();
 			state.log_action(summary).await;
 			ok_json(&resp)
 		},
-		Err(e) => err_json(StatusCode::BAD_GATEWAY, e),
+		Err(e) => {
+			let log = state.log_problems_since(started).await;
+			state.record_action(&summary, Vec::new(), Err(e.to_string()), log);
+			err_json(StatusCode::BAD_GATEWAY, e)
+		},
 	}
 }
 
@@ -110,13 +117,36 @@ where
 	F: Future<Output = Result<T, LdkServerError>>,
 	T: serde::Serialize,
 {
+	run_tracking(state, summary, fut, Vec::new()).await
+}
+
+// Like `run`, with ids (a channel's user_channel_id) that the node's later events about this action
+// name, besides the ids in the node's answer. Every action is recorded with how the node answered:
+// a refusal with the node's log lines from that moment, which often hold the real reason.
+async fn run_tracking<T, F>(state: &AppState, summary: String, fut: F, mut refs: Vec<String>) -> Response
+where
+	F: Future<Output = Result<T, LdkServerError>>,
+	T: serde::Serialize,
+{
+	let started = now_unix();
 	match fut.await {
 		Ok(resp) => {
+			let answer = serde_json::to_value(&resp).unwrap_or(Value::Null);
+			for key in ["user_channel_id", "payment_id", "payment_hash"] {
+				if let Some(id) = answer[key].as_str() {
+					refs.push(id.to_string());
+				}
+			}
+			state.record_action(&summary, refs, Ok(()), Vec::new());
 			state.refresh.notify_one();
 			state.log_action(summary).await;
 			ok_json(&resp)
 		},
-		Err(e) => err_json(StatusCode::BAD_GATEWAY, e),
+		Err(e) => {
+			let log = state.log_problems_since(started).await;
+			state.record_action(&summary, refs, Err(e.to_string()), log);
+			err_json(StatusCode::BAD_GATEWAY, e)
+		},
 	}
 }
 
@@ -224,11 +254,12 @@ pub async fn close_channel(
 		return err_json(StatusCode::BAD_REQUEST, "invalid channel reference");
 	}
 	let summary = format!("close channel {}", short_key(&input.user_channel_id));
+	let channel = input.user_channel_id.clone();
 	let request = CloseChannelRequest {
 		user_channel_id: input.user_channel_id,
 		counterparty_node_id: input.counterparty_node_id,
 	};
-	run(&state, summary, state.client.close_channel(request)).await
+	run_tracking(&state, summary, state.client.close_channel(request), vec![channel]).await
 }
 
 #[derive(Deserialize)]
@@ -248,12 +279,13 @@ pub async fn force_close_channel(
 		return err_json(StatusCode::BAD_REQUEST, "invalid channel reference");
 	}
 	let summary = format!("force-close channel {}", short_key(&input.user_channel_id));
+	let channel = input.user_channel_id.clone();
 	let request = ForceCloseChannelRequest {
 		user_channel_id: input.user_channel_id,
 		counterparty_node_id: input.counterparty_node_id,
 		force_close_reason: input.reason.filter(|r| !r.trim().is_empty()),
 	};
-	run(&state, summary, state.client.force_close_channel(request)).await
+	run_tracking(&state, summary, state.client.force_close_channel(request), vec![channel]).await
 }
 
 #[derive(Deserialize)]
@@ -279,12 +311,13 @@ pub async fn splice_in(
 		input.splice_amount_sats,
 		short_key(&input.user_channel_id)
 	);
+	let channel = input.user_channel_id.clone();
 	let request = SpliceInRequest {
 		user_channel_id: input.user_channel_id,
 		counterparty_node_id: input.counterparty_node_id,
 		amount: Some(splice_in_request::Amount::SpliceAmountSats(input.splice_amount_sats)),
 	};
-	run(&state, summary, state.client.splice_in(request)).await
+	run_tracking(&state, summary, state.client.splice_in(request), vec![channel]).await
 }
 
 #[derive(Deserialize)]
@@ -311,13 +344,14 @@ pub async fn splice_out(
 		input.splice_amount_sats,
 		short_key(&input.user_channel_id)
 	);
+	let channel = input.user_channel_id.clone();
 	let request = SpliceOutRequest {
 		user_channel_id: input.user_channel_id,
 		counterparty_node_id: input.counterparty_node_id,
 		address: input.address.filter(|a| !a.trim().is_empty()),
 		splice_amount_sats: input.splice_amount_sats,
 	};
-	run(&state, summary, state.client.splice_out(request)).await
+	run_tracking(&state, summary, state.client.splice_out(request), vec![channel]).await
 }
 
 #[derive(Deserialize)]

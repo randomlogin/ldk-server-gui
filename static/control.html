@@ -175,6 +175,17 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
   <div class="muted" id="noresult">No action performed yet.</div>
 </div>
 
+<div class="panel">
+  <h2>Recent actions <span id="recentcount" class="badge"></span>
+    <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">· what was asked, how the node answered, and what became of it</span></h2>
+  <div class="scroll" style="max-height:340px">
+  <table>
+    <thead><tr><th>When</th><th>Action</th><th>Result</th><th>Details</th></tr></thead>
+    <tbody id="recentbody"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
+  </table>
+  </div>
+</div>
+
 <div class="panel" id="inflight">
   <h2>Payments in flight</h2>
   <div id="inflightlist"></div>
@@ -486,6 +497,43 @@ function clearToken() {
 }
 
 // --- action plumbing ---
+const ago = ts => {
+  if (!ts) return "—";
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+};
+
+// The recent actions: what was asked, how the node answered, and what became of it later. "sent"
+// means the node accepted the request and the outcome is still to come (a channel being opened, a
+// payment on its way); the node's events settle it. A refusal carries the lines the node logged at
+// that moment, which often hold the real reason.
+const ACTION_STATUS = {
+  sent: ["amber", "sent, waiting"], pending: ["amber", "in progress"],
+  done: ["green", "done"], failed: ["red", "failed"],
+};
+async function loadRecentActions() {
+  let j;
+  try { j = await (await fetch("/api/actions-log")).json(); } catch (e) { return; }
+  if (!j || !j.ok) return;
+  document.getElementById("recentcount").textContent = j.records.length || "";
+  document.getElementById("recentbody").innerHTML = j.records.length ? j.records.map(r => {
+    const [color, label] = ACTION_STATUS[r.status] || ["gray", r.status];
+    const log = (r.log || []).map(l => `<div class="mono muted" style="font-size:11px;word-break:break-word">${esc(l)}</div>`).join("");
+    const settled = r.updated && r.updated !== r.at ? ` · settled ${ago(r.updated)}` : "";
+    return `<tr>
+      <td class="muted" data-sort="${r.at}" title="asked ${esc(fmtTime(r.at))}${settled}">${ago(r.at)}</td>
+      <td>${esc(r.summary)}</td>
+      <td data-sort="${esc(r.status)}"><span class="pill ${color}">${esc(label)}</span></td>
+      <td style="word-break:break-word">${esc(r.detail || "")}${log}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="4" class="muted">no action yet</td></tr>`;
+}
+loadRecentActions();
+setInterval(loadRecentActions, 4000);
+
 async function action(path, body) {
   if (tokenState !== "ok") {
     showBanner(tokenState === "bad" ? "The action token is not correct: enter the right one above."
@@ -506,6 +554,7 @@ async function action(path, body) {
   // The server refused the token: it changed after the page checked it. Stop sending commands.
   if (r.status === 403) setTokenState("bad");
   showResult(j);
+  loadRecentActions();
   if (j.ok) {
     refreshSnapshot();
     if (j.payment_id) trackPayment(j.payment_id, path);

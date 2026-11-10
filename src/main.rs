@@ -9,6 +9,7 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -158,6 +159,12 @@ struct Args {
 		help = "Remember where the payments sent from the control panel went in this file: the node does not record a payment's destination"
 	)]
 	payment_destinations_file: Option<PathBuf>,
+
+	#[arg(
+		long,
+		help = "Keep the control-panel actions and how they turned out in this file, so the list survives a restart"
+	)]
+	actions_log_file: Option<PathBuf>,
 }
 
 struct AppState {
@@ -183,6 +190,12 @@ struct AppState {
 	// The aliases of nodes (peers, channel counterparties, payment destinations) as the node's network
 	// graph knows them, by node ID: asked once per node and now and then again.
 	aliases: std::sync::Mutex<HashMap<String, AliasEntry>>,
+	// The control-panel actions and how they turned out, oldest first: what was asked, how the node
+	// answered, and later what became of it (its events, and its log when it refused). Saved to
+	// `actions_file`, if there is one.
+	actions: std::sync::Mutex<VecDeque<Value>>,
+	next_action_id: AtomicU64,
+	actions_file: Option<PathBuf>,
 	// Set when --enable-actions is passed; required as `X-Action-Token` on action POSTs.
 	action_token: Option<Arc<str>>,
 	// Notified by actions to trigger an immediate snapshot refresh.
@@ -305,6 +318,12 @@ async fn main() {
 		None => HashMap::new(),
 	};
 
+	let actions = match &args.actions_log_file {
+		Some(path) => load_actions(path),
+		None => VecDeque::new(),
+	};
+	let next_action_id = actions.iter().filter_map(|a| a["id"].as_u64()).max().unwrap_or(0) + 1;
+
 	let (tx, _rx) = broadcast::channel::<Arc<str>>(256);
 	let state = Arc::new(AppState {
 		snapshot: RwLock::new(Arc::from("{\"ok\":false,\"error\":\"no data yet\"}")),
@@ -324,6 +343,9 @@ async fn main() {
 		destinations: std::sync::Mutex::new(destinations),
 		destinations_file: args.payment_destinations_file.clone(),
 		aliases: std::sync::Mutex::new(HashMap::new()),
+		actions: std::sync::Mutex::new(actions),
+		next_action_id: AtomicU64::new(next_action_id),
+		actions_file: args.actions_log_file.clone(),
 		action_token,
 		refresh: Arc::clone(&refresh),
 		index_html,
@@ -381,6 +403,10 @@ async fn main() {
 							match stream.next_message().await {
 								Some(Ok(envelope)) => {
 									let msg = event_message(&envelope);
+									// An event can settle an action that was sent and is still in flight.
+									if let Ok(event) = serde_json::to_value(&envelope) {
+										state.settle_actions(&event);
+									}
 									{
 										let mut activity = state.activity.write().await;
 										if activity.len() >= EVENT_BUFFER_CAP {
@@ -453,6 +479,7 @@ async fn main() {
 		.route("/", get(index))
 		.route("/common.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], COMMON_JS) }))
 		.route("/api/versions", get(api_versions))
+		.route("/api/actions-log", get(api_actions_log))
 		.route("/api/snapshot", get(api_snapshot))
 		.route("/api/activity", get(api_activity))
 		.route("/api/stream", get(api_stream))
@@ -643,6 +670,13 @@ fn parse_build_info(text: &str) -> Vec<Value> {
 		.collect()
 }
 
+// The control-panel actions and how they turned out, newest first.
+async fn api_actions_log(State(state): State<Arc<AppState>>) -> Json<Value> {
+	let actions = state.actions.lock().expect("actions lock poisoned");
+	let records: Vec<&Value> = actions.iter().rev().collect();
+	Json(json!({ "ok": true, "records": records }))
+}
+
 // What the dashboard and the node it talks to were built from. The node reports its own, its
 // ldk-node's and its kyoto's in `/metrics`; if it cannot be reached or reports none, only the
 // dashboard's is listed and `error` says why.
@@ -733,6 +767,195 @@ const USAGE_FILE_REWRITE_EVERY: usize = 8_640;
 
 // How many payment destinations are remembered. The oldest are dropped first.
 const DESTINATIONS_CAP: usize = 5000;
+
+// How many control-panel actions are remembered with how they turned out.
+const ACTIONS_CAP: usize = 200;
+
+// What can follow from the node's events: a channel opened, closed or spliced, a payment sent.
+// Anything else is finished with the node's answer.
+fn action_kind(summary: &str) -> &'static str {
+	if summary.starts_with("open channel") {
+		"open"
+	} else if summary.starts_with("close channel") || summary.starts_with("force-close") {
+		"close"
+	} else if summary.starts_with("splice") {
+		"splice"
+	} else if summary.starts_with("pay ") || summary.starts_with("keysend") {
+		"payment"
+	} else {
+		"other"
+	}
+}
+
+// LDK's PaymentFailureReason, as the node numbers it.
+fn payment_failure_text(code: u64) -> &'static str {
+	match code {
+		1 => "the recipient rejected the payment",
+		2 => "the payment was abandoned",
+		3 => "retries exhausted",
+		4 => "the payment or its invoice expired",
+		5 => "no route was found",
+		6 => "an unexpected error",
+		7 => "the invoice needs features this node does not know",
+		8 => "no invoice came back for the offer in time",
+		9 => "the recipient rejected the invoice request",
+		10 => "a blinded path back to this node could not be made",
+		_ => "the payment failed",
+	}
+}
+
+// Settles the actions of `kind` that are still in flight ("sent" or "pending") and name `reference`
+// (a channel's user_channel_id, or a payment id): sets their status and detail. Returns the records
+// that changed. An action that already finished is never touched: a channel opened last week and
+// closed today does not turn that open into a failure.
+fn settle_in(
+	actions: &mut VecDeque<Value>, reference: &str, kind: &str, status: &str, detail: &str, now: u64,
+) -> Vec<Value> {
+	let mut changed = Vec::new();
+	if reference.is_empty() {
+		return changed;
+	}
+	for record in actions.iter_mut() {
+		let in_flight = matches!(record["status"].as_str(), Some("sent") | Some("pending"));
+		let named = record["refs"].as_array().is_some_and(|refs| refs.iter().any(|r| r == reference));
+		if in_flight && named && record["kind"] == kind {
+			record["status"] = json!(status);
+			record["detail"] = json!(detail);
+			record["updated"] = json!(now);
+			changed.push(record.clone());
+		}
+	}
+	changed
+}
+
+// What an event from the node (as JSON: {"event": {"<kind>": {...}}}) changes about the actions in
+// flight. Returns the records that changed.
+fn apply_event_to(actions: &mut VecDeque<Value>, envelope: &Value, now: u64) -> Vec<Value> {
+	let event = &envelope["event"];
+	let mut changed = Vec::new();
+	if let Some(c) = event.get("channel_state_changed") {
+		let id = c["user_channel_id"].as_str().unwrap_or_default();
+		let why = c["reason"]["message"].as_str().map(str::to_string);
+		match c["state"].as_u64() {
+			Some(1) => changed.extend(settle_in(
+				actions, id, "open", "pending",
+				&format!(
+					"the peer accepted: funding transaction {} is waiting for confirmations",
+					c["funding_txo"].as_str().unwrap_or("?")
+				),
+				now,
+			)),
+			Some(2) => changed.extend(settle_in(actions, id, "open", "done", "channel ready", now)),
+			Some(3) | Some(4) => {
+				let why = why.unwrap_or_else(|| "the channel was closed".to_string());
+				changed.extend(settle_in(actions, id, "open", "failed", &why, now));
+				changed.extend(settle_in(actions, id, "close", "done", &format!("channel closed: {why}"), now));
+			},
+			_ => {},
+		}
+	}
+	if let Some(c) = event.get("splice_negotiated") {
+		let id = c["user_channel_id"].as_str().unwrap_or_default();
+		changed.extend(settle_in(
+			actions, id, "splice", "done", "splice negotiated: its funding transaction is waiting for confirmations", now,
+		));
+	}
+	if let Some(c) = event.get("splice_negotiation_failed") {
+		let id = c["user_channel_id"].as_str().unwrap_or_default();
+		changed.extend(settle_in(actions, id, "splice", "failed", "the splice negotiation failed", now));
+	}
+	if let Some(p) = event.get("payment_successful") {
+		let id = p["payment_id"].as_str().unwrap_or_default();
+		changed.extend(settle_in(actions, id, "payment", "done", "payment sent", now));
+	}
+	if let Some(p) = event.get("payment_failed") {
+		let id = p["payment_id"].as_str().unwrap_or_default();
+		let why = p["reason"].as_u64().map(payment_failure_text).unwrap_or("the payment failed");
+		changed.extend(settle_in(actions, id, "payment", "failed", why, now));
+	}
+	changed
+}
+
+// A log time such as 2026-11-10T13:46:25.423Z as seconds since the Unix epoch.
+fn parse_log_time(time: &str) -> Option<u64> {
+	let (date, clock) = time.trim_end_matches('Z').split_once('T')?;
+	let mut date = date.split('-').map(|part| part.parse::<i64>().ok());
+	let (year, month, day) = (date.next()??, date.next()??, date.next()??);
+	let mut clock = clock.split(':');
+	let hour: i64 = clock.next()?.parse().ok()?;
+	let minute: i64 = clock.next()?.parse().ok()?;
+	let second: f64 = clock.next()?.parse().ok()?;
+	// Days since 1970-01-01 (the civil calendar, March first in the year's cycle).
+	let year = if month <= 2 { year - 1 } else { year };
+	let era = year.div_euclid(400);
+	let year_of_era = year - era * 400;
+	let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+	let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+	let days = era * 146_097 + day_of_era - 719_468;
+	u64::try_from(days * 86_400 + hour * 3600 + minute * 60 + second as i64).ok()
+}
+
+// The ERROR and WARN lines in `text` (a node log) written at or after `since` (unix seconds), the
+// last five, shortened: why a request was refused is often only there ("Failed to splice channel:
+// Channel unavailable: Peer does not support splicing").
+fn problems_in(text: &str, since: u64) -> Vec<String> {
+	let mut found: Vec<String> = text
+		.lines()
+		.filter_map(|line| {
+			let (head, message) = line.strip_prefix('[')?.split_once("] ")?;
+			let mut parts = head.split_whitespace();
+			let (time, level, target) = (parts.next()?, parts.next()?, parts.next()?);
+			if level != "ERROR" && level != "WARN" || parse_log_time(time)? + 1 < since {
+				return None;
+			}
+			let target = target.split(':').next().unwrap_or(target);
+			Some(format!("{level} {target}: {}", message.chars().take(300).collect::<String>()))
+		})
+		.collect();
+	let surplus = found.len().saturating_sub(5);
+	found.drain(..surplus);
+	found
+}
+
+// `problems_in` for the end of the log file.
+fn log_problems(path: &std::path::Path, since: u64) -> Vec<String> {
+	use std::io::{Read, Seek, SeekFrom};
+	let Ok(mut file) = std::fs::File::open(path) else { return Vec::new() };
+	let length = file.metadata().map(|m| m.len()).unwrap_or(0);
+	let mut bytes = Vec::new();
+	if file.seek(SeekFrom::Start(length.saturating_sub(256 * 1024))).is_err()
+		|| file.read_to_end(&mut bytes).is_err()
+	{
+		return Vec::new();
+	}
+	problems_in(&String::from_utf8_lossy(&bytes), since)
+}
+
+// The actions saved in `path`, one JSON record per line, the last line for an id winning, the newest
+// `ACTIONS_CAP` kept (and the file rewritten to just those when it holds more lines than that).
+fn load_actions(path: &std::path::Path) -> VecDeque<Value> {
+	let Ok(text) = std::fs::read_to_string(path) else { return VecDeque::new() };
+	let mut lines = 0;
+	let mut by_id: HashMap<u64, Value> = HashMap::new();
+	for line in text.lines().filter(|line| !line.trim().is_empty()) {
+		lines += 1;
+		let Ok(record) = serde_json::from_str::<Value>(line) else { continue };
+		let Some(id) = record["id"].as_u64() else { continue };
+		by_id.insert(id, record);
+	}
+	let mut records: Vec<(u64, Value)> = by_id.into_iter().collect();
+	records.sort_by_key(|(id, _)| *id);
+	let surplus = records.len().saturating_sub(ACTIONS_CAP);
+	let records: VecDeque<Value> = records.into_iter().skip(surplus).map(|(_, record)| record).collect();
+	if lines > records.len() {
+		let text: String = records.iter().map(|record| format!("{record}\n")).collect();
+		let temporary = path.with_extension("tmp");
+		if let Err(e) = std::fs::write(&temporary, text).and_then(|_| std::fs::rename(&temporary, path)) {
+			eprintln!("warning: cannot rewrite the actions log file '{}': {e}", path.display());
+		}
+	}
+	records
+}
 
 // How many aliases are asked for per poll, so that a long list fills in over a few polls instead of
 // one burst; how long an alias that was found is kept before asking again; and how soon to ask again
@@ -885,6 +1108,59 @@ impl AppState {
 				})
 				.collect(),
 		)
+	}
+
+	// Records a control-panel action and how the node answered the request. For an action whose outcome
+	// follows later (a channel opening, a payment) "sent" means the node accepted the request, and an
+	// event settles it afterwards; an answer that was an error is a failure, with the node's log lines
+	// from the moment it was refused.
+	fn record_action(&self, summary: &str, refs: Vec<String>, answer: Result<(), String>, log: Vec<String>) {
+		let kind = action_kind(summary);
+		let (status, detail) = match answer {
+			Ok(()) if kind == "other" => ("done", "done".to_string()),
+			Ok(()) => ("sent", "accepted by the node; waiting to hear how it turns out".to_string()),
+			Err(error) => ("failed", error),
+		};
+		let now = now_unix();
+		let record = json!({
+			"id": self.next_action_id.fetch_add(1, Ordering::Relaxed), "kind": kind, "at": now, "updated": now,
+			"summary": summary, "status": status, "detail": detail, "log": log, "refs": refs,
+		});
+		{
+			let mut actions = self.actions.lock().expect("actions lock poisoned");
+			if actions.len() >= ACTIONS_CAP {
+				actions.pop_front();
+			}
+			actions.push_back(record.clone());
+		}
+		self.save_action(&record);
+	}
+
+	// An event from the node, as JSON: it may settle actions that are in flight.
+	fn settle_actions(&self, event: &Value) {
+		let changed = {
+			let mut actions = self.actions.lock().expect("actions lock poisoned");
+			apply_event_to(&mut actions, event, now_unix())
+		};
+		for record in &changed {
+			self.save_action(record);
+		}
+	}
+
+	fn save_action(&self, record: &Value) {
+		if let Some(path) = &self.actions_file {
+			if let Err(e) = append_line(path, &record.to_string()) {
+				eprintln!("warning: cannot write the actions log file '{}': {e}", path.display());
+			}
+		}
+	}
+
+	// The node's ERROR and WARN log lines since `since`, a moment after a request it refused, when the
+	// node has had time to write them. Nothing if there is no node log.
+	async fn log_problems_since(&self, since: u64) -> Vec<String> {
+		let Some(path) = &self.node_log else { return Vec::new() };
+		tokio::time::sleep(Duration::from_millis(300)).await;
+		log_problems(path, since)
 	}
 
 	// The destinations by payment id, for the page.
@@ -1274,6 +1550,96 @@ mod tests {
 		assert!(entry.found());
 		let empty = AliasEntry { alias: None, features: Vec::new(), asked: std::time::Instant::now() };
 		assert!(!empty.found());
+	}
+
+	#[test]
+	fn log_times_and_problems() {
+		assert_eq!(parse_log_time("2023-11-14T22:13:20.000Z"), Some(1_700_000_000));
+		assert_eq!(parse_log_time("2026-11-10T13:46:25.423Z"), Some(1_794_318_385));
+		assert_eq!(parse_log_time("2024-02-29T00:00:00Z"), Some(1_709_164_800));
+		assert_eq!(parse_log_time("not a time"), None);
+		let log = "tial line cut off by the tail\n\
+			[2023-11-14T22:13:10.000Z ERROR ldk_node:1905] older than the action\n\
+			[2023-11-14T22:13:20.100Z INFO  ldk_node:1] fine\n\
+			[2023-11-14T22:13:21.000Z ERROR ldk_node:1905] Failed to splice channel: Channel unavailable: Peer does not support splicing\n\
+			[2023-11-14T22:13:21.500Z WARN  lightning::ln::peer_handler:9] odd\n";
+		assert_eq!(
+			problems_in(log, 1_700_000_000),
+			vec![
+				"ERROR ldk_node: Failed to splice channel: Channel unavailable: Peer does not support splicing".to_string(),
+				"WARN lightning: odd".to_string(),
+			]
+		);
+		assert!(problems_in("", 0).is_empty());
+	}
+
+	#[test]
+	fn events_settle_only_the_actions_in_flight() {
+		let record = |id: u64, kind: &str, status: &str, reference: &str| {
+			json!({ "id": id, "kind": kind, "status": status, "detail": "", "refs": [reference] })
+		};
+		let mut actions: VecDeque<Value> = VecDeque::from(vec![
+			record(1, "open", "sent", "chan-1"),
+			record(2, "open", "done", "chan-2"),
+			record(3, "close", "sent", "chan-2"),
+			record(4, "payment", "sent", "pay-1"),
+			record(5, "splice", "sent", "chan-9"),
+		]);
+		let channel = |id: &str, state: u64, message: Option<&str>| {
+			json!({ "event": { "channel_state_changed": {
+				"user_channel_id": id, "state": state, "funding_txo": "tx:0",
+				"reason": message.map(|m| json!({ "message": m })),
+			} } })
+		};
+		// The peer accepts: pending, then ready.
+		assert_eq!(apply_event_to(&mut actions, &channel("chan-1", 1, None), 10).len(), 1);
+		assert_eq!(actions[0]["status"], "pending");
+		assert!(actions[0]["detail"].as_str().unwrap().contains("tx:0"));
+		assert_eq!(apply_event_to(&mut actions, &channel("chan-1", 2, None), 11).len(), 1);
+		assert_eq!(actions[0]["status"], "done");
+		// Closing a channel that was opened and finished earlier settles the close and not the open.
+		let closed = channel("chan-2", 4, Some("Channel closed because it was closed"));
+		assert_eq!(apply_event_to(&mut actions, &closed, 12).len(), 1);
+		assert_eq!((actions[1]["status"].as_str(), actions[2]["status"].as_str()), (Some("done"), Some("done")));
+		assert!(actions[2]["detail"].as_str().unwrap().starts_with("channel closed:"));
+		// A payment fails, and a splice does.
+		let failed = json!({ "event": { "payment_failed": { "payment_id": "pay-1", "reason": 5 } } });
+		assert_eq!(apply_event_to(&mut actions, &failed, 13).len(), 1);
+		assert_eq!((actions[3]["status"].as_str(), actions[3]["detail"].as_str()), (Some("failed"), Some("no route was found")));
+		let splice = json!({ "event": { "splice_negotiation_failed": { "user_channel_id": "chan-9" } } });
+		assert_eq!(apply_event_to(&mut actions, &splice, 14).len(), 1);
+		assert_eq!(actions[4]["status"], "failed");
+		// Events about nothing we sent change nothing, and nothing is settled twice.
+		assert!(apply_event_to(&mut actions, &channel("other", 4, Some("x")), 15).is_empty());
+		assert!(apply_event_to(&mut actions, &failed, 16).is_empty());
+		// The open that was refused: the peer's message is the detail.
+		let mut refused = VecDeque::from(vec![record(7, "open", "sent", "chan-7")]);
+		let message = "Channel closed because counterparty force-closed with message: chan size of 0.00100000 BTC is below min chan size of 0.00200000 BTC";
+		apply_event_to(&mut refused, &channel("chan-7", 4, Some(message)), 20);
+		assert_eq!((refused[0]["status"].as_str(), refused[0]["detail"].as_str()), (Some("failed"), Some(message)));
+	}
+
+	#[test]
+	fn actions_are_loaded_folded_and_capped() {
+		let dir = std::env::temp_dir().join(format!("gui-actions-test-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let file = dir.join("actions.jsonl");
+		let line = |id: u64, status: &str| json!({ "id": id, "status": status }).to_string();
+		std::fs::write(&file, format!("{}\nnot json\n{}\n{}\n", line(1, "sent"), line(2, "sent"), line(1, "done"))).unwrap();
+		let records = load_actions(&file);
+		assert_eq!(records.len(), 2);
+		assert_eq!((records[0]["id"].as_u64(), records[0]["status"].as_str()), (Some(1), Some("done")));
+		assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), 2);
+		let many: String = (0..ACTIONS_CAP as u64 + 3).map(|i| format!("{}\n", line(i, "done"))).collect();
+		std::fs::write(&file, many).unwrap();
+		let records = load_actions(&file);
+		assert_eq!(records.len(), ACTIONS_CAP);
+		assert_eq!(records[0]["id"].as_u64(), Some(3));
+		assert_eq!(action_kind("open channel: 1 sat → x"), "open");
+		assert_eq!(action_kind("force-close channel x"), "close");
+		assert_eq!(action_kind("keysend 5 msat → x"), "payment");
+		assert_eq!(action_kind("connect peer x"), "other");
+		std::fs::remove_dir_all(&dir).unwrap();
 	}
 
 	#[test]

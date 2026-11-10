@@ -44,6 +44,23 @@ The control page asks for it once and stores it in the browser's `localStorage`;
 overall threat model is still "localhost-only": **do not bind the GUI to a non-loopback address
 when actions are enabled** unless you add proper authentication in front of it.
 
+## Recent actions
+
+The Actions page lists what was asked, how the node answered, and what became of it later. Opening a
+channel or sending a payment is accepted at once and settles later, so a request the node accepted is
+**sent, waiting** until the node's events say how it ended: a channel **in progress** (the peer
+accepted, the funding transaction waits for confirmations) and then **done** (ready), or **failed**
+with the peer's own words (for example "chan size of 0.00100000 BTC is below min chan size of
+0.00200000 BTC"); a payment **done** or **failed** with LDK's reason; a splice negotiated or failed.
+When the node refuses a request outright, the dashboard waits a moment and attaches the ERROR and WARN
+lines the node logged then (`--node-log`), since the real reason is often only there ("Failed to
+splice channel: Channel unavailable: Peer does not support splicing"). `--actions-log-file <path>`
+keeps the list (the last 200, JSON lines) across restarts; events that arrive while the dashboard is
+not running cannot settle anything.
+
+The node's events also fill the activity feed on the main page, which now shows a channel's state,
+its peer and the reason it was closed.
+
 ## Who a payment went to
 
 The node records no destination for a Lightning payment, and the payer of a BOLT11 payment is
