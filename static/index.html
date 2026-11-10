@@ -66,6 +66,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pill.blue { background: rgba(88,166,255,.13); color: var(--blue); }
 .pill.purple { background: rgba(188,140,255,.14); color: var(--purple); }
 .amt-in { color: var(--green); }
+details.featlist > summary { cursor: pointer; color: var(--muted); }
+details.featlist > summary:hover, details.featlist[open] > summary { color: var(--text); }
 tr.failed td { opacity: .55; }
 .who .sub { display: block; color: var(--muted); font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .liqbar { width: 140px; height: 7px; background: #232b3a; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle;}
@@ -268,13 +270,56 @@ function refreshUptimes() {
   }).catch(() => {});
 }
 
-// The features this node announces to its peers, in bit order; * marks one the peer must support.
+// What the features mean, in a line each (BOLT 9 and LDK's names); shown when hovering one.
+const FEATURE_INFO = {
+  DataLossProtect: "Detect that one side lost its channel state and help it recover",
+  UpfrontShutdownScript: "A peer commits to the address its funds go to when the channel closes, when it opens the channel",
+  GossipQueries: "Ask peers only for the routing gossip we are missing, not all of it",
+  VariableLengthOnion: "Variable-size onion packets, which can carry extra data such as custom records",
+  StaticRemoteKey: "After a force-close the peer's funds go to a fixed key, so it can recover them without our data",
+  PaymentSecret: "Invoices carry a payment secret, which protects against probing",
+  BasicMPP: "Receive one payment split over several routes (multi-part payments)",
+  Wumbo: "Channels larger than 16.7 million sats",
+  AnchorsZeroFeeHtlcTx: "Anchor-output channels whose HTLC transactions carry no fee of their own; fees are added when closing",
+  RouteBlinding: "Hide the last hops of a route in a blinded path (needed for BOLT12)",
+  ShutdownAnySegwit: "Close a channel to any segwit address, including taproot",
+  Taproot: "Taproot channels",
+  Quiescence: "Pause channel updates for a moment, which splicing needs",
+  OnionMessages: "Send and relay onion messages (needed for BOLT12)",
+  ChannelType: "Both sides state the channel type explicitly when a channel opens",
+  SCIDPrivacy: "Private channels use an alias instead of the real short channel id",
+  ZeroConf: "Use a channel before its funding transaction is confirmed",
+  Keysend: "Receive payments sent to the node ID without an invoice",
+  ProvideStorage: "Keep small backups for peers that ask (peer storage)",
+  Splice: "Add or remove funds in a channel without closing it (splicing)",
+  SimpleClose: "The newer, simpler cooperative-close protocol",
+};
+
+// Whether the features list is open: the node details are redrawn on every refresh, which would
+// close it.
+let featuresOpen = false;
+document.addEventListener("toggle", e => {
+  if (e.target.id === "featlist") featuresOpen = e.target.open;
+}, true);
+
+// The features this node announces to its peers, as a dropdown: a summary line, and the features in
+// bit order when it is open. * marks a required one (an even bit): a peer that does not support it
+// must not connect.
 function announcedFeatures(features) {
   if (!features) return `<span class="muted" title="an older ldk-server does not report them">—</span>`;
-  return Object.keys(features).map(Number).sort((a, b) => a - b).map(bit => {
+  const bits = Object.keys(features).map(Number).sort((a, b) => a - b);
+  const required = bits.filter(bit => features[bit].is_required).length;
+  const chips = bits.map(bit => {
     const f = features[bit];
-    return `<span class="pill ${f.name === "Splice" ? "green" : "gray"}" title="feature bit ${bit}${f.is_required ? ", required of peers" : ""}">${esc(f.name)}${f.is_required ? "*" : ""}</span>`;
+    const what = FEATURE_INFO[f.name] || "no description here";
+    const kind = f.is_required ? "required: a peer that does not support it must not connect" : "optional";
+    return `<span class="pill ${f.name === "Splice" ? "green" : "gray"}" title="${esc(what)}\nfeature bit ${bit}, ${kind}">${esc(f.name)}${f.is_required ? "*" : ""}</span>`;
   }).join(" ");
+  return `<details class="featlist" id="featlist" ${featuresOpen ? "open" : ""}>
+    <summary>${bits.length} features · ${required} required</summary>
+    <div style="line-height:2;margin-top:6px">${chips}</div>
+    <div class="muted" style="font-size:11px;margin-top:4px">* required: a peer that does not support it must not connect. Hover a feature for what it does.</div>
+  </details>`;
 }
 
 function renderNode(n) {
@@ -296,7 +341,7 @@ function renderNode(n) {
     <div>Chain source uptime</div><div id="up-chain">${fmtUptime(uptimes.chain)}</div>
     <div>Listening</div><div class="mono">${(n.listening_addresses || []).map(esc).join("<br>") || "—"}</div>
     <div>Announced URIs</div><div class="mono" style="word-break:break-all">${(n.node_uris || []).map(u => `${esc(u)} ${copyBtn(u)}`).join("<br>") || "—"}</div>
-    <div>Features we announce</div><div style="line-height:2">${announcedFeatures(n.features)}</div>`;
+    <div>Features we announce</div><div>${announcedFeatures(n.features)}</div>`;
 }
 
 function statusPills(c) {
