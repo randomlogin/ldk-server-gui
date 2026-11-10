@@ -77,6 +77,15 @@ node the graph has never heard of keeps showing just its ID. An alias is chosen 
 names: control and text-direction characters are removed, it is cut to 32 characters, and the page
 only ever shows it as text.
 
+## Peer features
+
+Both Peers tables have a **Features** column: a dropdown with the features the peer announced, in bit
+order, each with a line on what it does when hovered (the same descriptions as for the node's own
+features). For a peer you have a channel with, these are the features it sent when it last
+connected (its init message), which decide what it can do with you, such as splicing; for the
+others they are the features in its node announcement, from the node's network graph. The summary
+adds "splice" when the peer announces it. A peer with neither shows a dash.
+
 ## Liveness model
 
 The backend polls the node's gRPC API every `--poll-interval-secs` (default 5s) *and* subscribes to

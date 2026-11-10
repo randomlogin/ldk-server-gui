@@ -26,7 +26,11 @@ function fmtInt(n) {
     "tbody tr:hover td{background:rgba(255,255,255,.035)}" +
     ".scroll thead th{position:sticky;top:0;background:var(--panel,#12161f);z-index:1}" +
     ".panel{overflow-x:auto}" +
-    ".alias{font-weight:600}";
+    ".alias{font-weight:600}" +
+    // A list of features as a dropdown (the node's own, or a peer's in a table cell).
+    "details.featlist{border:none;padding:0}" +
+    "details.featlist>summary{cursor:pointer;color:var(--muted);font-weight:400;padding:0}" +
+    "details.featlist>summary:hover,details.featlist[open]>summary{color:var(--text)}";
 
   function cellKey(row, col) {
     var cell = row.cells[col];
@@ -322,3 +326,89 @@ function nodeSpan(id) {
 
 // A node as text, for menus and confirmations: "alias (shortened ID)", or just the shortened ID.
 function nodeName(id) { var alias = nodeAlias(id); return alias ? alias + " (" + short(id) + ")" : short(id); }
+
+// What the features mean, in a line each (BOLT 9 and LDK's names); shown when hovering one.
+var FEATURE_INFO = {
+  DataLossProtect: "Detect that one side lost its channel state and help it recover",
+  UpfrontShutdownScript: "A peer commits to the address its funds go to when the channel closes, when it opens the channel",
+  GossipQueries: "Ask peers only for the routing gossip we are missing, not all of it",
+  VariableLengthOnion: "Variable-size onion packets, which can carry extra data such as custom records",
+  StaticRemoteKey: "After a force-close the peer's funds go to a fixed key, so it can recover them without our data",
+  PaymentSecret: "Invoices carry a payment secret, which protects against probing",
+  BasicMPP: "Receive one payment split over several routes (multi-part payments)",
+  Wumbo: "Channels larger than 16.7 million sats",
+  AnchorsZeroFeeHtlcTx: "Anchor-output channels whose HTLC transactions carry no fee of their own; fees are added when closing",
+  RouteBlinding: "Hide the last hops of a route in a blinded path (needed for BOLT12)",
+  ShutdownAnySegwit: "Close a channel to any segwit address, including taproot",
+  Taproot: "Taproot channels",
+  Quiescence: "Pause channel updates for a moment, which splicing needs",
+  OnionMessages: "Send and relay onion messages (needed for BOLT12)",
+  ChannelType: "Both sides state the channel type explicitly when a channel opens",
+  SCIDPrivacy: "Private channels use an alias instead of the real short channel id",
+  ZeroConf: "Use a channel before its funding transaction is confirmed",
+  Keysend: "Receive payments sent to the node ID without an invoice",
+  ProvideStorage: "Keep small backups for peers that ask (peer storage)",
+  Splice: "Add or remove funds in a channel without closing it (splicing)",
+  SimpleClose: "The newer, simpler cooperative-close protocol",
+};
+
+// Features as a list [[bit, name, required], ...] in bit order, from the node's {bit: {name,
+// is_required}} form.
+function featureList(features) {
+  return Object.keys(features || {}).map(Number).sort(function (a, b) { return a - b; })
+    .map(function (bit) { return [bit, features[bit].name, !!features[bit].is_required]; });
+}
+
+// A feature list as chips, in order; hovering one says what it does. * marks a required one (an even
+// bit): a peer that does not support it must not connect. Needs the page's esc().
+function featureChipsHtml(list) {
+  return list.map(function (f) {
+    var what = FEATURE_INFO[f[1]] || "no description here";
+    var kind = f[2] ? "required: a peer that does not support it must not connect" : "optional";
+    return '<span class="pill ' + (f[1] === "Splice" ? "green" : "gray") + '" title="' + esc(what) +
+      "\nfeature bit " + f[0] + ", " + kind + '">' + esc(f[1]) + (f[2] ? "*" : "") + "</span>";
+  }).join(" ");
+}
+
+// What each peer announced, by node ID, from the latest snapshot. For a peer we have a channel with it
+// is what it sent when it last connected (its init message), which is what decides what it can do with
+// us, splicing for one; for the others it is the features in its node announcement, from the node's
+// network graph.
+var peerFeatureData = {};
+// The peers whose list the user has open: the tables are drawn again on every refresh.
+var openPeerFeatures = {};
+function setPeerFeatures(snap) {
+  peerFeatureData = {};
+  var announced = snap.announced || {};
+  Object.keys(announced).forEach(function (id) {
+    peerFeatureData[id] = { list: announced[id], source: "its node announcement (from the network graph)" };
+  });
+  var channels = (snap.channels && !snap.channels.error && snap.channels.channels) || [];
+  channels.forEach(function (c) {
+    var list = featureList(c.counterparty_features);
+    if (list.length) {
+      peerFeatureData[String(c.counterparty_node_id).toLowerCase()] = {
+        list: list, source: "what it announced when it last connected (its init message), which decides what it can do with us",
+      };
+    }
+  });
+}
+
+// A table cell with a peer's features as a dropdown, or a dash when none are known.
+function peerFeaturesCell(id) {
+  var d = peerFeatureData[String(id).toLowerCase()];
+  if (!d) {
+    return '<td class="muted" data-sort="" title="Not known: the peer has no channel with us, and its node announcement has not reached the node.">—</td>';
+  }
+  var splice = d.list.some(function (f) { return f[1] === "Splice"; });
+  return '<td data-sort="' + d.list.length + '"><details class="featlist peerfeat" data-id="' + esc(id) + '"' +
+    (openPeerFeatures[id] ? " open" : "") + "><summary>" + d.list.length + " features" + (splice ? " · splice" : "") + "</summary>" +
+    '<div style="line-height:2;margin-top:4px;max-width:380px">' + featureChipsHtml(d.list) + "</div>" +
+    '<div class="muted" style="font-size:11px;margin-top:2px;max-width:380px">From ' + d.source + ". * required.</div></details></td>";
+}
+document.addEventListener("toggle", function (e) {
+  var el = e.target;
+  if (el.classList && el.classList.contains("peerfeat")) {
+    if (el.open) openPeerFeatures[el.dataset.id] = true; else delete openPeerFeatures[el.dataset.id];
+  }
+}, true);

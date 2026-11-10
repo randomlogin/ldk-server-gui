@@ -257,8 +257,8 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     </details>
     <div class="scroll peerlist">
     <table>
-      <thead><tr><th>Node</th><th>Address</th><th>State</th><th></th></tr></thead>
-      <tbody id="peerbody"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
+      <thead><tr><th>Node</th><th>Address</th><th>State</th><th title="what the peer announced">Features</th><th></th></tr></thead>
+      <tbody id="peerbody"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -856,6 +856,7 @@ function renderPeerPickers(peers) {
 }
 function renderSnapshot(snap) {
   setNodeAliases(snap.aliases);
+  setPeerFeatures(snap);
   const chans = (snap.channels && !snap.channels.error && snap.channels.channels) || [];
   channelsById = {};
   chans.forEach(c => { channelsById[c.user_channel_id] = c; });
@@ -883,8 +884,9 @@ function renderSnapshot(snap) {
     <td class="mono muted">${idSpan(p.address, "mono muted")}</td>
     <td>${p.is_connected ? '<span class="pill green">connected</span>' : '<span class="pill gray">offline</span>'}
         ${p.is_persisted ? '<span class="pill gray">persisted</span>' : ""}</td>
+    ${peerFeaturesCell(p.node_id)}
     <td>${p.is_connected ? `<button class="act secondary" style="margin:0;padding:3px 10px" onclick="disconnectPeer('${esc(p.node_id)}')">Disconnect</button>` : ""}</td>
-  </tr>`).join("") : `<tr><td colspan="4" class="muted">no peers</td></tr>`;
+  </tr>`).join("") : `<tr><td colspan="5" class="muted">no peers</td></tr>`;
 }
 let lastSnap = null;
 async function refreshSnapshot() {

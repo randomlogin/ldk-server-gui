@@ -24,6 +24,7 @@ use ldk_server_client::config::{
 	get_default_config_path, load_config, read_tls_certificate, resolve_base_url,
 	resolve_cert_path, resolve_macaroon, Config,
 };
+use ldk_server_client::ldk_server_grpc::types::Feature;
 use ldk_server_client::ldk_server_grpc::api::{
 	GetBalancesRequest, GetNodeInfoRequest, GraphGetNodeRequest, ListChannelsRequest,
 	ListPaymentsRequest, ListPeersRequest,
@@ -347,6 +348,7 @@ async fn main() {
 					state.refresh_aliases(&client, &node_ids_in(&snap)).await;
 				}
 				snap["aliases"] = state.aliases_json();
+				snap["announced"] = state.announced_features_json();
 				let msg = Arc::<str>::from(snap.to_string());
 				*state.snapshot.write().await = Arc::clone(&msg);
 				let _ = state.tx.send(wrap("snapshot", &msg));
@@ -741,7 +743,28 @@ const ALIAS_RETRY: Duration = Duration::from_secs(600);
 
 struct AliasEntry {
 	alias: Option<String>,
+	// The features the node's announcement lists: bit, name, whether required. Bit order.
+	features: Vec<(u32, String, bool)>,
 	asked: std::time::Instant,
+}
+
+impl AliasEntry {
+	// Whether the node's announcement told us anything.
+	fn found(&self) -> bool {
+		self.alias.is_some() || !self.features.is_empty()
+	}
+}
+
+// Features as a list in bit order, for the page. The names are LDK's; they are cut short anyway.
+fn feature_list<'a>(
+	features: impl IntoIterator<Item = (&'a u32, &'a Feature)>,
+) -> Vec<(u32, String, bool)> {
+	let mut list: Vec<(u32, String, bool)> = features
+		.into_iter()
+		.map(|(bit, feature)| (*bit, feature.name.chars().take(40).collect(), feature.is_required))
+		.collect();
+	list.sort();
+	list
 }
 
 // An alias as it can be shown. It comes from a node's announcement, so it is whatever that node
@@ -816,7 +839,7 @@ impl AppState {
 				.filter(|id| match aliases.get(*id) {
 					None => true,
 					Some(entry) => {
-						entry.asked.elapsed() > if entry.alias.is_some() { ALIAS_RECHECK } else { ALIAS_RETRY }
+						entry.asked.elapsed() > if entry.found() { ALIAS_RECHECK } else { ALIAS_RETRY }
 					},
 				})
 				.take(ALIAS_LOOKUPS_PER_ROUND)
@@ -824,17 +847,16 @@ impl AppState {
 				.collect()
 		};
 		for id in due {
-			let alias = match client.graph_get_node(GraphGetNodeRequest { node_id: id.clone() }).await {
-				Ok(response) => response
-					.node
-					.and_then(|node| node.announcement_info)
-					.and_then(|announcement| clean_alias(&announcement.alias)),
+			let announcement = match client.graph_get_node(GraphGetNodeRequest { node_id: id.clone() }).await {
+				Ok(response) => response.node.and_then(|node| node.announcement_info),
 				Err(_) => None,
 			};
+			let alias = announcement.as_ref().and_then(|a| clean_alias(&a.alias));
+			let features = announcement.as_ref().map(|a| feature_list(&a.features)).unwrap_or_default();
 			self.aliases
 				.lock()
 				.expect("aliases lock poisoned")
-				.insert(id, AliasEntry { alias, asked: std::time::Instant::now() });
+				.insert(id, AliasEntry { alias, features, asked: std::time::Instant::now() });
 		}
 	}
 
@@ -845,6 +867,22 @@ impl AppState {
 			aliases
 				.iter()
 				.filter_map(|(id, entry)| entry.alias.as_ref().map(|alias| (id.clone(), json!(alias))))
+				.collect(),
+		)
+	}
+
+	// The features nodes announced in their node announcements, by node ID, as [bit, name, required]
+	// lists, for the page. Only nodes whose announcement lists some.
+	fn announced_features_json(&self) -> Value {
+		let aliases = self.aliases.lock().expect("aliases lock poisoned");
+		Value::Object(
+			aliases
+				.iter()
+				.filter(|(_, entry)| !entry.features.is_empty())
+				.map(|(id, entry)| {
+					let list = entry.features.iter().map(|(bit, name, required)| json!([bit, name, required]));
+					(id.clone(), Value::Array(list.collect()))
+				})
 				.collect(),
 		)
 	}
@@ -1220,6 +1258,22 @@ mod tests {
 		let ids: Vec<String> = node_ids_in(&snap).into_iter().collect();
 		assert_eq!(ids, vec![id('a'), id('b'), id('c')]);
 		assert!(node_ids_in(&json!({ "peers": { "error": "x" } })).is_empty());
+	}
+
+	#[test]
+	fn announced_features_are_listed_in_bit_order() {
+		let mut features = HashMap::new();
+		features.insert(63, Feature { name: "Splice".to_string(), is_required: false });
+		features.insert(0, Feature { name: "DataLossProtect".to_string(), is_required: true });
+		features.insert(35, Feature { name: "x".repeat(100), is_required: false });
+		let list = feature_list(&features);
+		assert_eq!(list.iter().map(|(bit, _, _)| *bit).collect::<Vec<_>>(), vec![0, 35, 63]);
+		assert_eq!(list[0], (0, "DataLossProtect".to_string(), true));
+		assert_eq!(list[1].1.len(), 40);
+		let entry = AliasEntry { alias: None, features: list, asked: std::time::Instant::now() };
+		assert!(entry.found());
+		let empty = AliasEntry { alias: None, features: Vec::new(), asked: std::time::Instant::now() };
+		assert!(!empty.found());
 	}
 
 	#[test]
