@@ -148,6 +148,11 @@ pub struct OpenChannelInput {
 	amount_sats: Option<u64>,
 	push_to_counterparty_msat: Option<u64>,
 	announce_channel: Option<bool>,
+	// The forwarding fees and CLTV delta the channel starts with; whatever is left out is the node's
+	// default.
+	forwarding_fee_proportional_millionths: Option<u32>,
+	forwarding_fee_base_msat: Option<u32>,
+	cltv_expiry_delta: Option<u32>,
 }
 
 pub async fn open_channel(
@@ -175,16 +180,31 @@ pub async fn open_channel(
 	let Some(amount_sats) = input.amount_sats.filter(|a| *a > 0) else {
 		return err_json(StatusCode::BAD_REQUEST, "amount_sats must be a positive number");
 	};
+	let any_config = input.forwarding_fee_proportional_millionths.is_some()
+		|| input.forwarding_fee_base_msat.is_some()
+		|| input.cltv_expiry_delta.is_some();
+	let channel_config = any_config.then(|| ChannelConfig {
+		forwarding_fee_proportional_millionths: input.forwarding_fee_proportional_millionths,
+		forwarding_fee_base_msat: input.forwarding_fee_base_msat,
+		cltv_expiry_delta: input.cltv_expiry_delta,
+		force_close_avoidance_max_fee_satoshis: None,
+		accept_underpaying_htlcs: None,
+		max_dust_htlc_exposure: None,
+	});
 	let request = OpenChannelRequest {
 		node_pubkey: node_pubkey.clone(),
 		address,
 		amount: Some(open_channel_request::Amount::ChannelAmountSats(amount_sats)),
 		push_to_counterparty_msat: input.push_to_counterparty_msat,
-		channel_config: None,
+		channel_config,
 		announce_channel: input.announce_channel.unwrap_or(false),
 		disable_counterparty_reserve: false,
 	};
-	let summary = format!("open channel: {amount_sats} sat → {}", short_key(&node_pubkey));
+	let summary = format!(
+		"open channel: {amount_sats} sat → {}{}",
+		short_key(&node_pubkey),
+		if any_config { " (with its own forwarding fees)" } else { "" }
+	);
 	run(&state, summary, state.client.open_channel(request)).await
 }
 

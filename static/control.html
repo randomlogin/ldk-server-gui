@@ -275,6 +275,16 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
     <input type="number" id="ocamt" min="1">
     <label for="ocpush">Push to counterparty (sats, optional)</label>
     <input type="number" id="ocpush" min="0">
+    <details>
+      <summary>Forwarding fees for this channel (optional)</summary>
+      <div class="muted" style="font-size:12px;margin-top:4px">What this node charges for forwarding payments out through the channel. Leave a field empty to use the node's default; 0 is a value. You can change them later under Channel operations.</div>
+      <label for="ocfeeprop">Proportional fee (millionths of the amount)</label>
+      <input type="number" id="ocfeeprop" min="0" step="1" placeholder="node default">
+      <label for="ocfeebase">Base fee (msat)</label>
+      <input type="number" id="ocfeebase" min="0" step="1" placeholder="node default">
+      <label for="occltv">CLTV expiry delta (blocks)</label>
+      <input type="number" id="occltv" min="0" step="1" placeholder="node default">
+    </details>
     <label class="inline"><input type="checkbox" id="ocpublic"> Announce public channel</label>
     <button class="act" onclick="openChannel()">Open channel</button>
   </div>
@@ -359,6 +369,8 @@ const idSpan = (h, cls) => h
   : "—";
 const val = id => document.getElementById(id).value.trim();
 const num = id => { const v = val(id); return v === "" ? null : Number(v); };
+// Empty, or a whole number that is not negative (0 is a value: a free channel).
+const wholeOrEmpty = v => v === null || (Number.isInteger(v) && v >= 0);
 
 function copyBtn(text) {
   return `<button class="copy" title="copy" data-copy="${esc(text)}">⧉</button>`;
@@ -736,11 +748,19 @@ async function openChannel() {
   if (need(address.includes(":"), "Missing or invalid host:port after '@'.")) return;
   if (need(amountSats && amountSats > 0, "Enter the channel size in sats.")) return;
   const pushMsat = num("ocpush");
-  if (!confirm(`Open a ${fmtInt(amountSats)} sat channel to ${short(node)}@${address}?`)) return;
+  const fees = { forwarding_fee_proportional_millionths: num("ocfeeprop"), forwarding_fee_base_msat: num("ocfeebase"), cltv_expiry_delta: num("occltv") };
+  if (need(Object.values(fees).every(wholeOrEmpty), "The fees and the CLTV delta must be whole numbers, 0 or more.")) return;
+  const feeText = [
+    fees.forwarding_fee_proportional_millionths !== null ? `${fmtInt(fees.forwarding_fee_proportional_millionths)} ppm` : null,
+    fees.forwarding_fee_base_msat !== null ? `base ${fmtInt(fees.forwarding_fee_base_msat)} msat` : null,
+    fees.cltv_expiry_delta !== null ? `CLTV delta ${fmtInt(fees.cltv_expiry_delta)}` : null,
+  ].filter(Boolean).join(", ");
+  if (!confirm(`Open a ${fmtInt(amountSats)} sat channel to ${short(node)}@${address}?` + (feeText ? `\n\nForwarding fees: ${feeText}` : ""))) return;
   await action("/api/actions/open-channel", {
     node_pubkey: node, address, amount_sats: amountSats,
     push_to_counterparty_msat: pushMsat ? pushMsat * 1000 : null,
     announce_channel: document.getElementById("ocpublic").checked,
+    ...fees,
   });
 }
 function pickedChannel() {
@@ -792,9 +812,9 @@ async function updateFees() {
   const body = { user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
     forwarding_fee_proportional_millionths: num("feeprop"),
     forwarding_fee_base_msat: num("feebase"), cltv_expiry_delta: num("feecltv") };
-  if (!body.forwarding_fee_proportional_millionths && !body.forwarding_fee_base_msat && !body.cltv_expiry_delta) {
-    showBanner("Fill at least one config field."); return;
-  }
+  const fields = [body.forwarding_fee_proportional_millionths, body.forwarding_fee_base_msat, body.cltv_expiry_delta];
+  if (fields.every(v => v === null)) { showBanner("Fill at least one config field."); return; }
+  if (!fields.every(wholeOrEmpty)) { showBanner("The fees and the CLTV delta must be whole numbers, 0 or more."); return; }
   await action("/api/actions/update-channel-config", body);
 }
 
