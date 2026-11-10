@@ -753,6 +753,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 [[package]]
 name = "ldk-server-client"
 version = "0.1.0"
+source = "git+https://github.com/randomlogin/ldk-server?branch=cbd-chain-source#8622991bc85d90a57823c60342d0572d0efbc809"
 dependencies = [
  "hyper 0.14.32",
  "hyper-rustls",
@@ -769,6 +770,7 @@ dependencies = [
 [[package]]
 name = "ldk-server-grpc"
 version = "0.1.0"
+source = "git+https://github.com/randomlogin/ldk-server?branch=cbd-chain-source#8622991bc85d90a57823c60342d0572d0efbc809"
 dependencies = [
  "bytes",
  "http 1.5.0",
@@ -797,6 +799,7 @@ dependencies = [
 [[package]]
 name = "ldk-server-macaroons"
 version = "0.1.0"
+source = "git+https://github.com/randomlogin/ldk-server?branch=cbd-chain-source#8622991bc85d90a57823c60342d0572d0efbc809"
 dependencies = [
  "bitcoin_hashes",
  "hex-conservative",

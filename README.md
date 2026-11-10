@@ -88,14 +88,13 @@ same as JSON.
 
 ## Building
 
-The dashboard uses `ldk-server-client` by path, so the checkouts must be siblings:
+The dashboard builds on its own: `ldk-server-client` comes from
+`https://github.com/randomlogin/ldk-server`, branch `cbd-chain-source` (set in `Cargo.toml`), at the
+exact commit `Cargo.lock` pins. `cargo build --release` needs network access to fetch it, and `git`.
 
-```
-projects/
-  ldk-server/       github.com/randomlogin/ldk-server       branch cbd-chain-source
-  ldk-node/         github.com/randomlogin/ldk-node         branch cbf-stats
-  kyoto/            github.com/randomlogin/kyoto            branch mutinynet-stats
-  ldk-server-gui/   github.com/randomlogin/ldk-server-gui   branch master
-```
+Move to a newer client with `cargo update -p ldk-server-client`. To pin a commit in `Cargo.toml`,
+replace `branch = "cbd-chain-source"` with `rev = "<commit>"`.
 
-`cargo build --release` in `ldk-server-gui` and in `ldk-server`.
+The node it talks to is a separate build. The one this dashboard was made for is ldk-server branch
+`cbd-chain-source` with ldk-node branch `cbf-stats` and kyoto branch `mutinynet-stats` (all in the
+`randomlogin` forks); the version footer shows what a running node was built from.

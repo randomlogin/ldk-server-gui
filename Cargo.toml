@@ -6,7 +6,10 @@ publish = false
 description = "Web dashboard and control panel for an LDK Server node"
 
 [dependencies]
-ldk-server-client = { path = "../ldk-server/ldk-server-client", features = ["serde"] }
+# The client crate of the ldk-server this dashboard talks to. The branch is what to follow; Cargo.lock
+# pins the exact commit (`cargo update -p ldk-server-client` moves it). To pin a commit in this file
+# instead, replace `branch = "..."` with `rev = "<commit>"`.
+ldk-server-client = { git = "https://github.com/randomlogin/ldk-server", branch = "cbd-chain-source", features = ["serde"] }
 axum = "0.8"
 # Plain-HTTP client for kyoto's stats endpoint; same version ldk-server-client already uses.
 reqwest = { version = "0.11", default-features = false }
