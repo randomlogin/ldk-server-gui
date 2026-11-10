@@ -67,6 +67,16 @@ connected (hover for everything it announced), and the node details list the fea
 announces. LDK refuses to splice a channel whose peer did not announce it ("Peer does not support
 splicing"), and the control panel says so before sending the request.
 
+## Node aliases
+
+Wherever a node is shown (peers, channels, payment destinations, the Actions page) its alias is
+shown over its ID, when there is one. The dashboard asks the node's network graph
+(`graph_get_node`) for each node it shows, a few per poll, and asks again about a node with no alias
+after 10 minutes (its announcement may arrive later) and about one with an alias after 6 hours. A
+node the graph has never heard of keeps showing just its ID. An alias is chosen by the node it
+names: control and text-direction characters are removed, it is cut to 32 characters, and the page
+only ever shows it as text.
+
 ## Liveness model
 
 The backend polls the node's gRPC API every `--poll-interval-secs` (default 5s) *and* subscribes to

@@ -25,7 +25,8 @@ function fmtInt(n) {
     // table scrolls inside its panel, and a panel that scrolls sideways on a narrow screen.
     "tbody tr:hover td{background:rgba(255,255,255,.035)}" +
     ".scroll thead th{position:sticky;top:0;background:var(--panel,#12161f);z-index:1}" +
-    ".panel{overflow-x:auto}";
+    ".panel{overflow-x:auto}" +
+    ".alias{font-weight:600}";
 
   function cellKey(row, col) {
     var cell = row.cells[col];
@@ -302,3 +303,22 @@ function featureNames(features) {
     .map(function (bit) { return features[bit].name; });
 }
 function hasFeature(features, name) { return featureNames(features).indexOf(name) !== -1; }
+
+// Node aliases. The snapshot carries {node ID: alias} for the nodes whose alias the node's network
+// graph knows; the pages hand it to setNodeAliases() and then show a node by its alias where there
+// is one. The alias is chosen by the node it names, so it is only ever put in the page as text.
+var nodeAliases = {};
+function setNodeAliases(map) { nodeAliases = map || {}; }
+function nodeAlias(id) { return (id && nodeAliases[String(id).toLowerCase()]) || ""; }
+
+// A node as HTML: its alias over its ID (shortened, with a copy button), or just the ID. Needs the
+// page's idSpan() and esc().
+function nodeSpan(id) {
+  if (!id) return "—";
+  var alias = nodeAlias(id);
+  if (!alias) return idSpan(id);
+  return '<span class="alias" title="' + esc(id) + '">' + esc(alias) + "</span><br>" + idSpan(id, "mono muted");
+}
+
+// A node as text, for menus and confirmations: "alias (shortened ID)", or just the shortened ID.
+function nodeName(id) { var alias = nodeAlias(id); return alias ? alias + " (" + short(id) + ")" : short(id); }

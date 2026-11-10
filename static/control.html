@@ -655,7 +655,7 @@ async function sendBolt11() {
     title: "Pay BOLT11 invoice",
     rows: [
       ["Amount", `<span class="mono">${d.amount_msat ? fmtMsatAsSats(d.amount_msat) : (amountSats ? fmtSats(amountSats) + " (from amount field)" : "not set")}</span>`],
-      ["Payee", idSpan(d.destination)],
+      ["Payee", nodeSpan(d.destination)],
       ["Description", esc(d.description || (d.description_hash ? "hash: " + short(d.description_hash) : "—"))],
       ["Created", `<span class="muted">${fmtTime(d.timestamp)}</span>`],
       ["Expiry", `<span class="muted">${d.expiry}s</span>`],
@@ -703,7 +703,7 @@ async function sendKeysend() {
   if (need(nodeId.length === 66 && isHex(nodeId), "Enter a valid node ID (66 hex chars).")) return;
   const amountMsat = num("ksamt");
   if (need(amountMsat && amountMsat > 0, "Enter an amount in sats.")) return;
-  if (!confirm(`Keysend ${fmtInt(amountMsat)} sat to ${short(nodeId)}?`)) return;
+  if (!confirm(`Keysend ${fmtInt(amountMsat)} sat to ${nodeName(nodeId)}?`)) return;
   await action("/api/actions/spontaneous-send", { node_id: nodeId, amount_msat: amountMsat * 1000 });
 }
 async function createInvoice() {
@@ -755,7 +755,7 @@ async function openChannel() {
     fees.forwarding_fee_base_msat !== null ? `base ${fmtInt(fees.forwarding_fee_base_msat)} msat` : null,
     fees.cltv_expiry_delta !== null ? `CLTV delta ${fmtInt(fees.cltv_expiry_delta)}` : null,
   ].filter(Boolean).join(", ");
-  if (!confirm(`Open a ${fmtInt(amountSats)} sat channel to ${short(node)}@${address}?` + (feeText ? `\n\nForwarding fees: ${feeText}` : ""))) return;
+  if (!confirm(`Open a ${fmtInt(amountSats)} sat channel to ${nodeName(node)}@${address}?` + (feeText ? `\n\nForwarding fees: ${feeText}` : ""))) return;
   await action("/api/actions/open-channel", {
     node_pubkey: node, address, amount_sats: amountSats,
     push_to_counterparty_msat: pushMsat ? pushMsat * 1000 : null,
@@ -771,7 +771,7 @@ async function closeChannel(force) {
   const c = pickedChannel();
   if (!c) { showBanner("No channel selected."); return; }
   const what = force ? "FORCE-close" : "cooperatively close";
-  const msg = `${what} the ${fmtSats(c.channel_value_sats)} channel with ${short(c.counterparty_node_id)}?`
+  const msg = `${what} the ${fmtSats(c.channel_value_sats)} channel with ${nodeName(c.counterparty_node_id)}?`
     + (force ? "\n\nThis broadcasts the commitment transaction and starts a timelock." : "");
   if (!confirm(msg)) return;
   const body = { user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id };
@@ -787,7 +787,7 @@ async function spliceIn() {
   }
   const amountSats = num("siamt");
   if (need(amountSats && amountSats > 0, "Enter the splice-in amount in sats.")) return;
-  if (!confirm(`Splice ${fmtInt(amountSats)} sat INTO the channel with ${short(c.counterparty_node_id)}?`)) return;
+  if (!confirm(`Splice ${fmtInt(amountSats)} sat INTO the channel with ${nodeName(c.counterparty_node_id)}?`)) return;
   await action("/api/actions/splice-in", {
     user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
     splice_amount_sats: amountSats });
@@ -801,7 +801,7 @@ async function spliceOut() {
   }
   const amountSats = num("soamt");
   if (need(amountSats && amountSats > 0, "Enter the splice-out amount in sats.")) return;
-  if (!confirm(`Splice ${fmtInt(amountSats)} sat OUT of the channel with ${short(c.counterparty_node_id)}?`)) return;
+  if (!confirm(`Splice ${fmtInt(amountSats)} sat OUT of the channel with ${nodeName(c.counterparty_node_id)}?`)) return;
   await action("/api/actions/splice-out", {
     user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
     address: val("soaddr") || null, splice_amount_sats: amountSats });
@@ -827,7 +827,7 @@ async function connectPeer() {
     { node_pubkey: uri, persist: document.getElementById("peerpersist").checked });
 }
 async function disconnectPeer(nodeId) {
-  if (!confirm(`Disconnect peer ${short(nodeId)}?`)) return;
+  if (!confirm(`Disconnect peer ${nodeName(nodeId)}?`)) return;
   await action("/api/actions/disconnect-peer", { node_pubkey: nodeId });
 }
 
@@ -835,7 +835,7 @@ async function disconnectPeer(nodeId) {
 let channelsById = {};
 let peersById = {};
 function peerOptionText(p) {
-  return `${short(p.node_id)} · ${p.address}${p.is_connected ? " · connected" : " · offline"}`;
+  return `${nodeName(p.node_id)} · ${p.address}${p.is_connected ? " · connected" : " · offline"}`;
 }
 function fillOpenChannelPeer(sel) {
   const p = peersById[sel.value];
@@ -855,17 +855,18 @@ function renderPeerPickers(peers) {
   }
 }
 function renderSnapshot(snap) {
+  setNodeAliases(snap.aliases);
   const chans = (snap.channels && !snap.channels.error && snap.channels.channels) || [];
   channelsById = {};
   chans.forEach(c => { channelsById[c.user_channel_id] = c; });
   const opts = chans.map(c =>
-    `<option value="${esc(c.user_channel_id)}">${esc(short(c.counterparty_node_id))} · ${fmtSats(c.channel_value_sats)}${c.is_usable ? "" : " (not usable)"}</option>`);
+    `<option value="${esc(c.user_channel_id)}">${esc(nodeName(c.counterparty_node_id))} · ${fmtSats(c.channel_value_sats)}${c.is_usable ? "" : " (not usable)"}</option>`);
   const selHtml = opts.join("") || `<option value="">no channels</option>`;
   for (const id of ["chpick", "chstatpick"]) {
     const sel = document.getElementById(id);
     const prev = sel.value;
     if (id === "chstatpick")
-      sel.innerHTML = chans.map(c => `<option value="${esc(c.channel_id)}">${esc(short(c.counterparty_node_id))} · ${fmtSats(c.channel_value_sats)}</option>`).join("") || `<option value="">no channels</option>`;
+      sel.innerHTML = chans.map(c => `<option value="${esc(c.channel_id)}">${esc(nodeName(c.counterparty_node_id))} · ${fmtSats(c.channel_value_sats)}</option>`).join("") || `<option value="">no channels</option>`;
     else sel.innerHTML = selHtml;
     if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
   }
@@ -878,7 +879,7 @@ function renderSnapshot(snap) {
   const pb = document.getElementById("peerbody");
   peers.sort((a, b) => b.is_connected - a.is_connected);
   pb.innerHTML = peers.length ? peers.map(p => `<tr>
-    <td class="mono">${idSpan(p.node_id)}</td>
+    <td class="mono" data-sort="${esc(nodeAlias(p.node_id) || p.node_id)}">${nodeSpan(p.node_id)}</td>
     <td class="mono muted">${idSpan(p.address, "mono muted")}</td>
     <td>${p.is_connected ? '<span class="pill green">connected</span>' : '<span class="pill gray">offline</span>'}
         ${p.is_persisted ? '<span class="pill gray">persisted</span>' : ""}</td>

@@ -381,7 +381,7 @@ function renderChannels(resp) {
     const pct = capMsat > 0 ? Math.min(100, (out / capMsat) * 100) : 0;
     return `<tr>
       <td>${statusPills(c)}</td>
-      <td class="mono">${idSpan(c.counterparty_node_id)}</td>
+      <td class="mono" data-sort="${esc(nodeAlias(c.counterparty_node_id) || c.counterparty_node_id)}">${nodeSpan(c.counterparty_node_id)}</td>
       <td class="mono muted">${c.short_channel_id ?? "—"}</td>
       <td class="num mono" data-sort="${c.channel_value_sats ?? ""}">${fmtSats(c.channel_value_sats)}</td>
       <td class="num mono" data-sort="${c.outbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
@@ -435,7 +435,7 @@ function counterparty(p, dest, dir) {
   if (dest && (dest.node_id || dest.label)) {
     const name = dest.label ? `<span class="sub" title="${esc(dest.label)}">${esc(dest.label)}</span>` : "";
     return dest.node_id
-      ? { sort: dest.node_id, html: idSpan(dest.node_id) + name }
+      ? { sort: nodeAlias(dest.node_id) || dest.node_id, html: nodeSpan(dest.node_id) + name }
       : { sort: dest.label, html: esc(dest.label) };
   }
   const kind = p.kind || {};
@@ -450,7 +450,7 @@ function counterparty(p, dest, dir) {
   }
   if (key === "onchain") {
     const node = findCounterparty(body.tx_type);
-    if (node) return { sort: node, html: idSpan(node) };
+    if (node) return { sort: nodeAlias(node) || node, html: nodeSpan(node) };
   }
   const why = dir === "INBOUND"
     ? "the node does not say who paid this (a BOLT11 payer is anonymous); what an invoice was for is remembered only for invoices created from this dashboard"
@@ -492,7 +492,7 @@ function renderPeers(resp) {
   if (!peers.length) { body.innerHTML = `<tr><td colspan="3" class="muted">no peers</td></tr>`; return; }
   peers.sort((a, b) => b.is_connected - a.is_connected);
   body.innerHTML = peers.map(p => `<tr>
-    <td class="mono">${idSpan(p.node_id)}</td>
+    <td class="mono" data-sort="${esc(nodeAlias(p.node_id) || p.node_id)}">${nodeSpan(p.node_id)}</td>
     <td class="mono muted">${idSpan(p.address, "mono muted")}</td>
     <td>${p.is_connected ? '<span class="pill green">connected</span>' : '<span class="pill gray">offline</span>'}
         ${p.is_persisted ? '<span class="pill gray">persisted</span>' : ""}</td>
@@ -500,6 +500,7 @@ function renderPeers(resp) {
 }
 
 function render(snap) {
+  setNodeAliases(snap.aliases);
   document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
   if (!snap.ok) setConn(false, "node unreachable");
   else setConn(true, "live");

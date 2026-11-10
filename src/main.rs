@@ -6,7 +6,7 @@
 // over Server-Sent Events. With `--enable-actions`, it also exposes mutating
 // node commands (see actions.rs), guarded by a random per-start action token.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,8 +25,8 @@ use ldk_server_client::config::{
 	resolve_cert_path, resolve_macaroon, Config,
 };
 use ldk_server_client::ldk_server_grpc::api::{
-	GetBalancesRequest, GetNodeInfoRequest, ListChannelsRequest, ListPaymentsRequest,
-	ListPeersRequest,
+	GetBalancesRequest, GetNodeInfoRequest, GraphGetNodeRequest, ListChannelsRequest,
+	ListPaymentsRequest, ListPeersRequest,
 };
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Notify, RwLock};
@@ -179,6 +179,9 @@ struct AppState {
 	// node does not record a destination. Saved to `destinations_file`, if there is one.
 	destinations: std::sync::Mutex<HashMap<String, Value>>,
 	destinations_file: Option<PathBuf>,
+	// The aliases of nodes (peers, channel counterparties, payment destinations) as the node's network
+	// graph knows them, by node ID: asked once per node and now and then again.
+	aliases: std::sync::Mutex<HashMap<String, AliasEntry>>,
 	// Set when --enable-actions is passed; required as `X-Action-Token` on action POSTs.
 	action_token: Option<Arc<str>>,
 	// Notified by actions to trigger an immediate snapshot refresh.
@@ -319,6 +322,7 @@ async fn main() {
 		usage_file: args.usage_history_file.clone(),
 		destinations: std::sync::Mutex::new(destinations),
 		destinations_file: args.payment_destinations_file.clone(),
+		aliases: std::sync::Mutex::new(HashMap::new()),
 		action_token,
 		refresh: Arc::clone(&refresh),
 		index_html,
@@ -338,6 +342,11 @@ async fn main() {
 				let mut snap = collect_snapshot(&client).await;
 				// Where the payments sent from here went, which the node does not record.
 				snap["destinations"] = state.destinations_json();
+				// The aliases of the nodes on the page, from the node's graph (when the node answers).
+				if snap["node"]["error"].is_null() {
+					state.refresh_aliases(&client, &node_ids_in(&snap)).await;
+				}
+				snap["aliases"] = state.aliases_json();
 				let msg = Arc::<str>::from(snap.to_string());
 				*state.snapshot.write().await = Arc::clone(&msg);
 				let _ = state.tx.send(wrap("snapshot", &msg));
@@ -723,6 +732,55 @@ const USAGE_FILE_REWRITE_EVERY: usize = 8_640;
 // How many payment destinations are remembered. The oldest are dropped first.
 const DESTINATIONS_CAP: usize = 5000;
 
+// How many aliases are asked for per poll, so that a long list fills in over a few polls instead of
+// one burst; how long an alias that was found is kept before asking again; and how soon to ask again
+// about a node whose alias is not known (its announcement may arrive later).
+const ALIAS_LOOKUPS_PER_ROUND: usize = 8;
+const ALIAS_RECHECK: Duration = Duration::from_secs(6 * 3600);
+const ALIAS_RETRY: Duration = Duration::from_secs(600);
+
+struct AliasEntry {
+	alias: Option<String>,
+	asked: std::time::Instant,
+}
+
+// An alias as it can be shown. It comes from a node's announcement, so it is whatever that node
+// chose: control characters (the 32 bytes are often padded with zeros), characters that reverse the
+// direction of the text around them, and anything past 32 characters are dropped. `None` if nothing
+// is left.
+fn clean_alias(raw: &str) -> Option<String> {
+	let cleaned: String = raw
+		.chars()
+		.filter(|c| {
+			!c.is_control()
+				&& !matches!(*c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+		})
+		.collect();
+	let cleaned: String = cleaned.trim().chars().take(32).collect();
+	(!cleaned.is_empty()).then_some(cleaned)
+}
+
+// The IDs of the nodes the page shows: peers, channel counterparties, and the destinations of
+// payments sent from here.
+fn node_ids_in(snap: &Value) -> BTreeSet<String> {
+	let mut ids = BTreeSet::new();
+	let mut add = |value: &Value| {
+		if let Some(id) = value.as_str().filter(|id| id.len() == 66 && id.bytes().all(|b| b.is_ascii_hexdigit())) {
+			ids.insert(id.to_ascii_lowercase());
+		}
+	};
+	for peer in snap["peers"]["peers"].as_array().into_iter().flatten() {
+		add(&peer["node_id"]);
+	}
+	for channel in snap["channels"]["channels"].as_array().into_iter().flatten() {
+		add(&channel["counterparty_node_id"]);
+	}
+	for destination in snap["destinations"].as_object().into_iter().flat_map(|map| map.values()) {
+		add(&destination["node_id"]);
+	}
+	ids
+}
+
 impl AppState {
 	// Remember where the payment `payment_id`, sent from the control panel, went: `kind` is bolt11,
 	// bolt12 or keysend, `node_id` the node it went to if known, `label` a name for the destination
@@ -747,6 +805,48 @@ impl AppState {
 				eprintln!("warning: cannot write the payment destinations file '{}': {e}", path.display());
 			}
 		}
+	}
+
+	// Looks up the aliases of `ids` that are not known yet, or were not asked about recently, in the
+	// node's network graph. At most `ALIAS_LOOKUPS_PER_ROUND` per call.
+	async fn refresh_aliases(&self, client: &LdkServerClient, ids: &BTreeSet<String>) {
+		let due: Vec<String> = {
+			let aliases = self.aliases.lock().expect("aliases lock poisoned");
+			ids.iter()
+				.filter(|id| match aliases.get(*id) {
+					None => true,
+					Some(entry) => {
+						entry.asked.elapsed() > if entry.alias.is_some() { ALIAS_RECHECK } else { ALIAS_RETRY }
+					},
+				})
+				.take(ALIAS_LOOKUPS_PER_ROUND)
+				.cloned()
+				.collect()
+		};
+		for id in due {
+			let alias = match client.graph_get_node(GraphGetNodeRequest { node_id: id.clone() }).await {
+				Ok(response) => response
+					.node
+					.and_then(|node| node.announcement_info)
+					.and_then(|announcement| clean_alias(&announcement.alias)),
+				Err(_) => None,
+			};
+			self.aliases
+				.lock()
+				.expect("aliases lock poisoned")
+				.insert(id, AliasEntry { alias, asked: std::time::Instant::now() });
+		}
+	}
+
+	// The aliases that are known, by node ID, for the page.
+	fn aliases_json(&self) -> Value {
+		let aliases = self.aliases.lock().expect("aliases lock poisoned");
+		Value::Object(
+			aliases
+				.iter()
+				.filter_map(|(id, entry)| entry.alias.as_ref().map(|alias| (id.clone(), json!(alias))))
+				.collect(),
+		)
 	}
 
 	// The destinations by payment id, for the page.
@@ -1099,6 +1199,27 @@ mod tests {
 		assert!(map.contains_key("p3") && map.contains_key(&format!("p{}", DESTINATIONS_CAP + 2)));
 		assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), DESTINATIONS_CAP);
 		std::fs::remove_dir_all(&dir).unwrap();
+	}
+
+	#[test]
+	fn aliases_are_cleaned_and_node_ids_collected() {
+		assert_eq!(clean_alias("Faucet LND\0\0\0").as_deref(), Some("Faucet LND"));
+		assert_eq!(clean_alias("  Alby 🐝 plebs ⚡ 1 mutinynet").as_deref(), Some("Alby 🐝 plebs ⚡ 1 mutinynet"));
+		// The direction of the text around it cannot be reversed, nor a line broken.
+		assert_eq!(clean_alias("evil\u{202E}gnp.exe\n\r").as_deref(), Some("evilgnp.exe"));
+		assert_eq!(clean_alias("\0\0\0\0"), None);
+		assert_eq!(clean_alias("   "), None);
+		assert_eq!(clean_alias(&"x".repeat(80)).unwrap().chars().count(), 32);
+
+		let id = |c: char| c.to_string().repeat(66);
+		let snap = json!({
+			"peers": { "peers": [{ "node_id": id('a') }, { "node_id": "short" }] },
+			"channels": { "channels": [{ "counterparty_node_id": id('B') }, { "counterparty_node_id": id('a') }] },
+			"destinations": { "p1": { "node_id": id('c') }, "p2": { "node_id": null } },
+		});
+		let ids: Vec<String> = node_ids_in(&snap).into_iter().collect();
+		assert_eq!(ids, vec![id('a'), id('b'), id('c')]);
+		assert!(node_ids_in(&json!({ "peers": { "error": "x" } })).is_empty());
 	}
 
 	#[test]
