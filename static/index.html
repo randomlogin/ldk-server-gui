@@ -74,6 +74,8 @@ tr.failed td { opacity: .55; }
 .liqbar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
 .id { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; cursor: pointer;}
 .scroll { max-height: 420px; overflow-y: auto; }
+/* The peers list: room for about 20 rows (a row is about 34px), less on a short window. */
+.scroll.peerlist { max-height: min(75vh, 740px); }
 .feed { list-style: none; margin: 0; padding: 0; }
 .feed li { padding: 7px 4px; border-bottom: 1px solid #1a212e; font-size: 13px; }
 .feed li:last-child { border-bottom: none; }
@@ -149,7 +151,7 @@ button.copy:hover { color: var(--accent2); }
   <div>
     <div class="panel" style="margin-bottom:14px">
       <h2>Peers <span id="peercount" class="badge"></span></h2>
-      <div class="scroll" style="max-height:180px">
+      <div class="scroll peerlist">
       <table>
         <thead><tr><th>Node</th><th>Address</th><th>State</th></tr></thead>
         <tbody id="peerbody"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>

@@ -58,6 +58,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pill.gray { background: rgba(138,147,165,.15); color: var(--muted); }
 .id { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; cursor: pointer;}
 .scroll { max-height: 420px; overflow-y: auto; }
+/* The peers list: room for about 20 rows (a row is about 34px), less on a short window. */
+.scroll.peerlist { max-height: min(75vh, 740px); }
 label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
 label.inline { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 4px; text-transform: none; font-size: 13px; color: var(--text); }
 input[type=text], input[type=password], input[type=number], select, textarea {
@@ -253,7 +255,7 @@ body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-all
       <label class="inline"><input type="checkbox" id="peerpersist"> Persist (reconnect on restart)</label>
       <button class="act" onclick="connectPeer()">Connect</button>
     </details>
-    <div class="scroll" style="max-height:220px">
+    <div class="scroll peerlist">
     <table>
       <thead><tr><th>Node</th><th>Address</th><th>State</th><th></th></tr></thead>
       <tbody id="peerbody"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
