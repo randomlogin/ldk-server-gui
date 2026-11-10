@@ -68,8 +68,18 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .amt-in { color: var(--green); }
 tr.failed td { opacity: .55; }
 .who .sub { display: block; color: var(--muted); font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.liqbar { width: 140px; height: 7px; background: #232b3a; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle;}
-.liqbar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+/* The liquidity bar of a channel: outbound (orange, what can be sent), inbound (blue, what can be
+   received), and the rest in grey (the reserves, fees and payments in flight). */
+.liq { width: 170px; }
+.liqbar { display: flex; height: 8px; background: #2a3243; border-radius: 4px; overflow: hidden; }
+.liqbar .out { background: var(--accent); }
+.liqbar .in { background: var(--blue); }
+.liqlabel { display: flex; justify-content: space-between; margin-top: 3px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: #2a3243; }
+.key.out, .liqlabel .o { color: var(--accent); }
+.key.out { background: var(--accent); }
+.key.in, .liqlabel .i { color: var(--blue); }
+.key.in { background: var(--blue); }
 .id { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; cursor: pointer;}
 .scroll { max-height: 420px; overflow-y: auto; }
 /* The peers list: room for about 20 rows (a row is about 34px), less on a short window. */
@@ -121,12 +131,19 @@ button.copy:hover { color: var(--accent2); }
 <div class="grid" style="margin-top:14px">
   <div class="panel">
     <h2>Channels <span id="chcount" class="badge"></span></h2>
+    <div class="muted" style="font-size:12px;margin:-4px 0 8px">The bar shows how the channel's capacity is split:
+      <span class="key out"></span><b>outbound</b>, what you can send;
+      <span class="key in"></span><b>inbound</b>, what you can receive;
+      <span class="key"></span>grey, reserves, fees and payments in flight.</div>
     <div class="scroll">
     <table id="channels">
       <thead><tr>
         <th>Status</th><th>Counterparty</th><th>SCID</th>
-        <th class="num">Capacity</th><th class="num">Outbound</th><th class="num">Inbound</th>
-        <th title="whether the peer announces splicing">Splice</th><th></th>
+        <th class="num">Capacity</th>
+        <th class="num" title="what you can send through this channel"><span class="key out"></span>Outbound</th>
+        <th class="num" title="what you can receive through this channel"><span class="key in"></span>Inbound</th>
+        <th title="whether the peer announces splicing">Splice</th>
+        <th title="how the capacity is split between outbound (orange) and inbound (blue)">Liquidity</th>
       </tr></thead>
       <tbody id="chbody"><tr><td colspan="8" class="muted">loading…</td></tr></tbody>
     </table>
@@ -335,6 +352,24 @@ function spliceCell(c) {
   return `<td data-sort="${yes ? 1 : 0}"><span class="pill ${yes ? "green" : "gray"}" title="the peer announces: ${names}">${yes ? "splice" : "no splice"}</span></td>`;
 }
 
+// How a channel's capacity is split, as a bar: outbound (what can be sent) from the left, inbound
+// (what can be received) after it, the rest grey (the reserves, fees and payments in flight), with the
+// shares written under it and the amounts on hover.
+function liquidityCell(c) {
+  const capacity = (c.channel_value_sats || 0) * 1000;
+  const out = c.outbound_capacity_msat || 0, inbound = c.inbound_capacity_msat || 0;
+  const share = v => capacity > 0 ? Math.min(100, v / capacity * 100) : 0;
+  const outShare = share(out);
+  const inShare = Math.min(100 - outShare, share(inbound));
+  const rest = Math.max(0, capacity - out - inbound);
+  const tip = `Outbound: ${fmtMsatAsSats(out)} (${outShare.toFixed(0)}%), what you can send\n` +
+    `Inbound: ${fmtMsatAsSats(inbound)} (${inShare.toFixed(0)}%), what you can receive\n` +
+    `Reserves, fees and payments in flight: ${fmtMsatAsSats(rest)}`;
+  return `<td class="liq" data-sort="${outShare.toFixed(1)}" title="${esc(tip)}">
+    <div class="liqbar"><div class="out" style="width:${outShare.toFixed(1)}%"></div><div class="in" style="width:${inShare.toFixed(1)}%"></div></div>
+    <div class="liqlabel"><span class="o">${outShare.toFixed(0)}% out</span><span class="i">${inShare.toFixed(0)}% in</span></div></td>`;
+}
+
 function renderChannels(resp) {
   const body = document.getElementById("chbody");
   const count = document.getElementById("chcount");
@@ -343,9 +378,6 @@ function renderChannels(resp) {
   if (!chans.length) { body.innerHTML = `<tr><td colspan="8" class="muted">no channels</td></tr>`; return; }
   chans.sort((a, b) => (b.is_usable - a.is_usable) || (b.channel_value_sats - a.channel_value_sats));
   body.innerHTML = chans.map(c => {
-    const capMsat = (c.channel_value_sats || 0) * 1000;
-    const out = c.outbound_capacity_msat || 0;
-    const pct = capMsat > 0 ? Math.min(100, (out / capMsat) * 100) : 0;
     return `<tr>
       <td>${statusPills(c)}</td>
       <td class="mono" data-sort="${esc(nodeAlias(c.counterparty_node_id) || c.counterparty_node_id)}">${nodeSpan(c.counterparty_node_id)}</td>
@@ -354,7 +386,7 @@ function renderChannels(resp) {
       <td class="num mono" data-sort="${c.outbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
       <td class="num mono" data-sort="${c.inbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.inbound_capacity_msat)}</td>
       ${spliceCell(c)}
-      <td><div class="liqbar" title="outbound share"><div style="width:${pct.toFixed(1)}%"></div></div></td>
+      ${liquidityCell(c)}
     </tr>`;
   }).join("");
 }
