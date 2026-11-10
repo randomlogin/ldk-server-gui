@@ -177,6 +177,20 @@ button.copy:hover { color: var(--accent2); }
   </div>
 </div>
 
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>Forwarded payments <span id="fwdcount" class="badge"></span>
+      <span id="fwdtotals" class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Time</th><th>From</th><th>To</th><th class="num">Amount</th><th class="num">Fee earned</th></tr></thead>
+      <tbody id="fwdbody"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
+    </table>
+    </div>
+    <div class="muted" id="fwdnote" style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+
 <footer>ldk-server-gui · auto-refreshes on node events</footer>
 
 <script>
@@ -349,6 +363,37 @@ function spliceCell(c) {
   return `<td data-sort="${yes ? 1 : 0}"><span class="pill ${yes ? "green" : "gray"}" title="the peer announces: ${names}">${yes ? "splice" : "no splice"}</span></td>`;
 }
 
+// A sat amount from msat, with the fraction when there is one: fees are often a few sats and a fraction.
+const fmtMsatPrecise = v => {
+  if (v == null) return "—";
+  const sat = v / 1000;
+  return (Number.isInteger(sat) ? fmtInt(sat) : String(+sat.toFixed(3))) + " sat";
+};
+
+// The payments this node forwarded, as the dashboard has recorded them from the node's events (the
+// node keeps only totals unless its forwarded payment tracking mode is "detailed"). Newest first.
+function renderForwards(f) {
+  const body = document.getElementById("fwdbody");
+  const note = document.getElementById("fwdnote");
+  if (!f) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">not reported</td></tr>`;
+    return;
+  }
+  const list = f.recent || [];
+  document.getElementById("fwdcount").textContent = f.count > list.length ? `${list.length} of ${f.count}` : f.count || "";
+  document.getElementById("fwdtotals").textContent = f.count
+    ? `· ${fmtMsatPrecise(f.amount_msat)} forwarded, ${fmtMsatPrecise(f.fees_msat)} earned in fees`
+    : "";
+  note.textContent = "Recorded from the node's events while this dashboard runs; the node itself keeps only totals unless its forwarded payment tracking mode is detailed.";
+  body.innerHTML = list.length ? list.map(r => `<tr>
+      <td class="muted" data-sort="${r.at}" title="${esc(fmtTime(r.at))}">${ago(r.at)}</td>
+      <td class="mono" data-sort="${esc(nodeAlias(r.from_node) || r.from_node || "")}" title="${r.from_channel ? "channel " + esc(r.from_channel) : ""}">${nodeSpan(r.from_node)}</td>
+      <td class="mono" data-sort="${esc(nodeAlias(r.to_node) || r.to_node || "")}" title="${r.to_channel ? "channel " + esc(r.to_channel) : ""}">${nodeSpan(r.to_node)}</td>
+      <td class="num mono" data-sort="${r.amount_msat ?? ""}">${fmtMsatPrecise(r.amount_msat)}</td>
+      <td class="num mono amt-in" data-sort="${r.fee_msat ?? ""}">${r.fee_msat == null ? "—" : "+" + fmtMsatPrecise(r.fee_msat)}</td>
+    </tr>`).join("") : `<tr><td colspan="5" class="muted">no forwarded payment seen yet</td></tr>`;
+}
+
 // How a channel's capacity is split, as a bar: outbound (what can be sent) from the left, inbound
 // (what can be received) after it, the rest hatched (the reserves, fees and payments in flight), with the
 // shares written under it and the amounts on hover.
@@ -519,6 +564,7 @@ function render(snap) {
   renderChannels(snap.channels);
   renderPayments(snap.payments, fundingTxids(snap.channels), snap.destinations);
   renderPeers(snap.peers);
+  renderForwards(snap.forwards);
 }
 
 // activity feed
@@ -540,6 +586,13 @@ function channelEventText(d) {
   return `${icon} channel ${esc(state)}${peer}${why}${tx}`;
 }
 
+// "peer in → peer out" of a forwarded-payment event.
+function forwardPeers(d) {
+  const from = d.prev_htlcs && d.prev_htlcs[0] && d.prev_htlcs[0].node_id;
+  const to = d.next_htlcs && d.next_htlcs[0] && d.next_htlcs[0].node_id;
+  return from || to ? `${from ? nodeName(from) : "?"} → ${to ? nodeName(to) : "?"}` : "";
+}
+
 function eventSummary(e) {
   // The node's event is {event: {<kind>: {...}}}.
   const d = (e.data && e.data.event && e.data.event[e.kind]) || (e.data && e.data[e.kind]) || e.data || {};
@@ -549,7 +602,8 @@ function eventSummary(e) {
     payment_received: "📥 payment received" + amt,
     payment_successful: "✅ payment sent" + amt,
     payment_failed: "❌ payment failed" + amt + (PAYMENT_FAILURES[d.reason] ? " — " + PAYMENT_FAILURES[d.reason] : ""),
-    payment_forwarded: "🔁 payment forwarded" + (d.total_fee_earned_msat != null ? " · fee " + fmtMsatAsSats(d.total_fee_earned_msat) : ""),
+    payment_forwarded: "🔁 forwarded " + (d.outbound_amount_forwarded_msat ? fmtMsatPrecise(Number(d.outbound_amount_forwarded_msat)) + " " : "") +
+      (forwardPeers(d) ? esc(forwardPeers(d)) : "") + (d.total_fee_earned_msat != null ? " · fee " + fmtMsatPrecise(Number(d.total_fee_earned_msat)) : ""),
     payment_claimable: "⏳ payment claimable" + (d.claimable_amount_msat != null ? " " + fmtMsatAsSats(d.claimable_amount_msat) : ""),
     channel_state_changed: channelEventText(d),
     splice_negotiated: "🔀 splice negotiated " + idSpan(d.channel_id) + (d.new_funding_txo ? " · funding tx " + txLink(d.new_funding_txo) : ""),

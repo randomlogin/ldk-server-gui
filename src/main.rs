@@ -188,6 +188,12 @@ struct Args {
 		help = "Block explorer that transactions link to, e.g. https://mutinynet.com (default: mempool.space for the node's network; none for regtest)"
 	)]
 	explorer_url: Option<String>,
+
+	#[arg(
+		long,
+		help = "Keep the payments this node forwarded, as the node's events report them, in this file (the node keeps only totals unless its forwarded payment tracking mode is detailed)"
+	)]
+	forwards_log_file: Option<PathBuf>,
 }
 
 struct AppState {
@@ -221,6 +227,10 @@ struct AppState {
 	actions_file: Option<PathBuf>,
 	// The block explorer transactions link to, if one was given.
 	explorer_url: Option<String>,
+	// The payments this node forwarded, oldest first, from the node's events: the node itself keeps only
+	// totals unless it tracks forwards in detail. Saved to `forwards_file`, if there is one.
+	forwards: std::sync::Mutex<VecDeque<Value>>,
+	forwards_file: Option<PathBuf>,
 	// Set when --enable-actions is passed; required as `X-Action-Token` on action POSTs.
 	action_token: Option<Arc<str>>,
 	// Notified by actions to trigger an immediate snapshot refresh.
@@ -420,6 +430,11 @@ async fn main() {
 		Some(found)
 	});
 
+	let forwards = match &args.forwards_log_file {
+		Some(path) => load_forwards(path),
+		None => VecDeque::new(),
+	};
+
 	let (tx, _rx) = broadcast::channel::<Arc<str>>(256);
 	let state = Arc::new(AppState {
 		snapshot: RwLock::new(Arc::from("{\"ok\":false,\"error\":\"no data yet\"}")),
@@ -443,6 +458,8 @@ async fn main() {
 		next_action_id: AtomicU64::new(next_action_id),
 		actions_file: args.actions_log_file.clone(),
 		explorer_url,
+		forwards: std::sync::Mutex::new(forwards),
+		forwards_file: args.forwards_log_file.clone(),
 		action_token,
 		refresh: Arc::clone(&refresh),
 		index_html,
@@ -469,6 +486,7 @@ async fn main() {
 				snap["aliases"] = state.aliases_json();
 				snap["announced"] = state.announced_features_json();
 				snap["explorer"] = json!(state.explorer_url);
+				snap["forwards"] = state.forwards_json();
 				let msg = Arc::<str>::from(snap.to_string());
 				*state.snapshot.write().await = Arc::clone(&msg);
 				let _ = state.tx.send(wrap("snapshot", &msg));
@@ -504,6 +522,7 @@ async fn main() {
 									// An event can settle an action that was sent and is still in flight.
 									if let Ok(event) = serde_json::to_value(&envelope) {
 										state.settle_actions(&event);
+										state.record_forward(&event);
 									}
 									{
 										let mut activity = state.activity.write().await;
@@ -865,6 +884,50 @@ const USAGE_FILE_REWRITE_EVERY: usize = 8_640;
 
 // How many payment destinations are remembered. The oldest are dropped first.
 const DESTINATIONS_CAP: usize = 5000;
+
+// How many forwarded payments are remembered, and how many of them go to the page with each snapshot.
+const FORWARDS_CAP: usize = 500;
+const FORWARDS_SHOWN: usize = 30;
+
+// A forwarded payment from the node's event (as JSON, {"event": {"payment_forwarded": {...}}}) as a
+// record for the list: when, the node and channel it came in from and went out through, the amount
+// forwarded and the fee earned. `None` for any other event.
+fn forward_from_event(envelope: &Value, now: u64) -> Option<Value> {
+	let forwarded = envelope["event"].get("payment_forwarded")?;
+	let side = |htlcs: &Value| htlcs.as_array().and_then(|list| list.first()).cloned().unwrap_or(Value::Null);
+	let (from, to) = (side(&forwarded["prev_htlcs"]), side(&forwarded["next_htlcs"]));
+	Some(json!({
+		"at": forwarded["observed_at_timestamp"].as_u64().filter(|at| *at > 0).unwrap_or(now),
+		"from_node": from["node_id"], "from_channel": from["channel_id"],
+		"to_node": to["node_id"], "to_channel": to["channel_id"],
+		"amount_msat": forwarded["outbound_amount_forwarded_msat"],
+		"fee_msat": forwarded["total_fee_earned_msat"],
+		"onchain": forwarded["claim_from_onchain_tx"],
+	}))
+}
+
+// The forwards saved in `path`, one JSON record per line, the newest `FORWARDS_CAP` kept (and the file
+// rewritten to just those when it holds more lines).
+fn load_forwards(path: &std::path::Path) -> VecDeque<Value> {
+	let Ok(text) = std::fs::read_to_string(path) else { return VecDeque::new() };
+	let all: Vec<Value> = text
+		.lines()
+		.filter(|line| !line.trim().is_empty())
+		.filter_map(|line| serde_json::from_str::<Value>(line).ok())
+		.filter(|record| record["at"].is_u64())
+		.collect();
+	let surplus = all.len().saturating_sub(FORWARDS_CAP);
+	let kept: VecDeque<Value> = all.into_iter().skip(surplus).collect();
+	let lines = text.lines().filter(|line| !line.trim().is_empty()).count();
+	if lines > kept.len() {
+		let text: String = kept.iter().map(|record| format!("{record}\n")).collect();
+		let temporary = path.with_extension("tmp");
+		if let Err(e) = std::fs::write(&temporary, text).and_then(|_| std::fs::rename(&temporary, path)) {
+			eprintln!("warning: cannot rewrite the forwards log file '{}': {e}", path.display());
+		}
+	}
+	kept
+}
 
 // How many control-panel actions are remembered with how they turned out.
 const ACTIONS_CAP: usize = 200;
@@ -1295,6 +1358,32 @@ impl AppState {
 				eprintln!("warning: cannot write the actions log file '{}': {e}", path.display());
 			}
 		}
+	}
+
+	// An event from the node, as JSON: a forwarded payment is remembered (and saved).
+	fn record_forward(&self, event: &Value) {
+		let Some(record) = forward_from_event(event, now_unix()) else { return };
+		{
+			let mut forwards = self.forwards.lock().expect("forwards lock poisoned");
+			if forwards.len() >= FORWARDS_CAP {
+				forwards.pop_front();
+			}
+			forwards.push_back(record.clone());
+		}
+		if let Some(path) = &self.forwards_file {
+			if let Err(e) = append_line(path, &record.to_string()) {
+				eprintln!("warning: cannot write the forwards log file '{}': {e}", path.display());
+			}
+		}
+	}
+
+	// The latest forwards, newest first, with how many are remembered and the fees they earned in all.
+	fn forwards_json(&self) -> Value {
+		let forwards = self.forwards.lock().expect("forwards lock poisoned");
+		let fees: u64 = forwards.iter().filter_map(|f| f["fee_msat"].as_u64()).sum();
+		let amount: u64 = forwards.iter().filter_map(|f| f["amount_msat"].as_u64()).sum();
+		let recent: Vec<&Value> = forwards.iter().rev().take(FORWARDS_SHOWN).collect();
+		json!({ "count": forwards.len(), "fees_msat": fees, "amount_msat": amount, "recent": recent })
 	}
 
 	// The node's ERROR and WARN log lines since `since`, a moment after a request it refused, when the
@@ -1834,6 +1923,40 @@ mod tests {
 		assert_eq!(explorer_from_config("[cbf]\ncustom_signet_magic = \"deadbeef\""), None);
 		// A key in another section does not count.
 		assert_eq!(explorer_from_config("[other]\nserver_url = \"https://x.test/api\""), None);
+	}
+
+	#[test]
+	fn forwards_are_taken_from_events_and_kept() {
+		let (a, b) = ("02".to_string() + &"a".repeat(64), "03".to_string() + &"b".repeat(64));
+		let event = json!({ "event": { "payment_forwarded": {
+			"prev_htlcs": [{ "channel_id": "chan-in", "node_id": a, "amount_msat": 20_012_000 }],
+			"next_htlcs": [{ "channel_id": "chan-out", "node_id": b, "amount_msat": 20_000_000 }],
+			"total_fee_earned_msat": 12_000, "outbound_amount_forwarded_msat": 20_000_000,
+			"observed_at_timestamp": 1_794_320_000, "claim_from_onchain_tx": false,
+		} } });
+		let record = forward_from_event(&event, 5).unwrap();
+		assert_eq!(record["at"], 1_794_320_000u64);
+		assert_eq!((&record["from_node"], &record["to_node"]), (&json!(a), &json!(b)));
+		assert_eq!((&record["from_channel"], &record["to_channel"]), (&json!("chan-in"), &json!("chan-out")));
+		assert_eq!((&record["amount_msat"], &record["fee_msat"]), (&json!(20_000_000u64), &json!(12_000u64)));
+		// No timestamp in the event: when it was seen. Other events are not forwards.
+		let bare = json!({ "event": { "payment_forwarded": { "prev_htlcs": [], "next_htlcs": [] } } });
+		let record = forward_from_event(&bare, 77).unwrap();
+		assert_eq!((record["at"].as_u64(), record["from_node"].is_null()), (Some(77), true));
+		assert!(forward_from_event(&json!({ "event": { "payment_received": {} } }), 1).is_none());
+		assert!(forward_from_event(&json!({}), 1).is_none());
+
+		let dir = std::env::temp_dir().join(format!("gui-forwards-test-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let file = dir.join("forwards.jsonl");
+		let many: String = (0..FORWARDS_CAP as u64 + 4).map(|i| format!("{}\n", json!({ "at": i + 1, "fee_msat": 1 }))).collect();
+		std::fs::write(&file, format!("not json\n{many}")).unwrap();
+		let kept = load_forwards(&file);
+		assert_eq!(kept.len(), FORWARDS_CAP);
+		assert_eq!(kept[0]["at"], 5u64);
+		assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), FORWARDS_CAP);
+		assert!(load_forwards(&dir.join("missing")).is_empty());
+		std::fs::remove_dir_all(&dir).unwrap();
 	}
 
 	#[test]

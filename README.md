@@ -50,6 +50,16 @@ The control page asks for it once and stores it in the browser's `localStorage`;
 overall threat model is still "localhost-only": **do not bind the GUI to a non-loopback address
 when actions are enabled** unless you add proper authentication in front of it.
 
+## Forwarded payments
+
+The main page lists the payments this node forwarded for others: when, the peer it came in from and
+the peer it went out to (by alias), the amount, and the fee earned, with the totals in the heading.
+The live feed says the same as it happens ("forwarded 20 000 sat Faucet LND → red-apple-2 · fee 12
+sat"). The node itself keeps only per-channel totals unless its `forwarded_payment_tracking_mode` is
+`detailed`, so the dashboard records the forwards from the node's events. `--forwards-log-file <path>`
+keeps them (the last 500, JSON lines) across restarts; a forward that happens while the dashboard is
+not running is not recorded.
+
 ## Recent actions
 
 The Actions page lists what was asked, how the node answered, and what became of it later. Opening a
