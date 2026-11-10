@@ -106,13 +106,6 @@ function fmtUptime(s) {
   return (d ? `${d}d ` : "") + `${h}h ${m}m ${sec}s`;
 }
 
-function fmtBytes(n) {
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return `${i ? n.toFixed(1) : n} ${units[i]}`;
-}
-
 function setConn(ok, label) {
   $("conndot").className = "dot " + (ok ? "ok" : "err");
   $("connlabel").textContent = label;
@@ -188,41 +181,12 @@ async function refresh() {
   }
 }
 
-// A line chart of one series as inline SVG, `points` being [{t: seconds, v: number or null}]. The
-// line breaks at a null value (after a node restart) and where readings are missing for a while.
-function lineChart(points, fmt) {
-  const W = 600, H = 100, pad = 3;
-  const known = points.filter(p => p.v != null);
-  if (known.length < 2) return `<div class="muted">collecting readings…</div>`;
-  const t0 = points[0].t, t1 = Math.max(points[points.length - 1].t, t0 + 1);
-  const peak = Math.max(...known.map(p => p.v));
-  const top = peak > 0 ? peak * 1.1 : 1;
-  const x = t => pad + (t - t0) / (t1 - t0) * (W - 2 * pad);
-  const y = v => H - pad - v / top * (H - 2 * pad);
-  const steps = points.slice(1).map((p, i) => p.t - points[i].t).sort((a, b) => a - b);
-  const gap = (steps[Math.floor(steps.length / 2)] || 10) * 6;
-  let d = "", drawing = false, previous = null;
-  for (const p of points) {
-    if (p.v == null || (previous != null && p.t - previous > gap)) drawing = false;
-    previous = p.t;
-    if (p.v == null) continue;
-    d += `${drawing ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)} `;
-    drawing = true;
-  }
-  const last = known[known.length - 1].v;
-  const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none"` +
-    ` style="display:block;background:rgba(255,255,255,0.03);border-radius:6px">` +
-    `<path d="${d}" fill="none" stroke="#ffb84d" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>` +
-    `<div class="muted" style="font-size:12px;margin:2px 0 12px">now ${fmt(last)} · highest ${fmt(peak)}` +
-    ` · ${clock(t0)} to ${clock(t1)}</div>`;
-}
 async function refreshUsage() {
   try {
     const resp = await (await fetch(`/api/usage-history?minutes=${$("userange").value}`)).json();
     if (!resp.ok) return;
-    $("chart-rss").innerHTML = lineChart(resp.data.map(p => ({ t: p.t, v: p.rss })), fmtBytes);
-    $("chart-cpu").innerHTML = lineChart(resp.data.map(p => ({ t: p.t, v: p.cpu })), v => v.toFixed(1) + " %");
+    renderChart($("chart-rss"), resp.data.map(p => ({ t: p.t, v: p.rss })), fmtBytes, { binary: true });
+    renderChart($("chart-cpu"), resp.data.map(p => ({ t: p.t, v: p.cpu })), v => v.toFixed(1) + " %", { zero: true });
   } catch (e) {}
 }
 

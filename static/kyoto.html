@@ -119,6 +119,19 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 <div class="grid" style="margin-top:14px">
   <div class="panel">
+    <h2>Banned peers <span id="bancount" class="badge"></span>
+      <span class="muted">· dropped from the address tables for misbehaving</span></h2>
+    <table>
+      <thead>
+        <tr><th>Address</th><th class="num">Banned at</th><th>Reason</th></tr>
+      </thead>
+      <tbody id="banbody"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
     <h2>Chain source events <span id="eventcount" class="badge"></span>
       <span class="muted">· from the node's log</span></h2>
     <div id="eventbanner" class="banner"></div>
@@ -142,13 +155,6 @@ function fmtUptime(s) {
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
   return (d ? `${d}d ` : "") + `${h}h ${m}m ${sec}s`;
-}
-
-function fmtBytes(n) {
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return `${i ? n.toFixed(1) : n} ${units[i]}`;
 }
 
 function setConn(ok, label) {
@@ -241,10 +247,37 @@ async function refreshEvents() {
   try { renderEvents(await (await fetch("/api/chain-events")).json()); } catch (e) {}
 }
 
+// Peers kyoto banned: the most recent ones it remembers, newest first, out of `banned_total` in all.
+// A ban only drops the peer from kyoto's address tables, so it can come back through gossip.
+function renderBanned(section) {
+  const body = $("banbody");
+  if (!section.ok) {
+    $("bancount").textContent = "";
+    body.innerHTML = `<tr><td colspan="3" class="muted">no data</td></tr>`;
+    return;
+  }
+  const s = section.data;
+  if (!Array.isArray(s.banned)) {
+    $("bancount").textContent = "";
+    body.innerHTML = `<tr><td colspan="3" class="muted">this kyoto does not report bans (an older build)</td></tr>`;
+    return;
+  }
+  const total = s.banned_total || 0;
+  $("bancount").textContent = total > s.banned.length ? `${fmtInt(s.banned.length)} of ${fmtInt(total)}` : fmtInt(total);
+  body.innerHTML = s.banned.length
+    ? s.banned.slice().reverse().map(b =>
+        `<tr><td>${esc(b.addr)}</td>` +
+        `<td class="num" data-sort="${b.banned_at}">${new Date(b.banned_at * 1000).toLocaleString()}</td>` +
+        `<td title="${esc(b.reason_kind)}">${esc(b.reason)}</td></tr>`
+      ).join("")
+    : `<tr><td colspan="3" class="muted">no peer has been banned</td></tr>`;
+}
+
 function render(resp) {
   renderCbf(resp.cbf);
   renderKyoto(resp);
   renderHistory(resp.history);
+  renderBanned(resp.kyoto);
 }
 
 function renderKyoto(resp) {
