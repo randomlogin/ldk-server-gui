@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LDK Node Dashboard</title>
+<style>
+:root {
+  --bg: #0b0e14;
+  --panel: #12161f;
+  --panel2: #171d29;
+  --border: #232b3a;
+  --text: #d7dde8;
+  --muted: #8a93a5;
+  --accent: #f7931a;
+  --accent2: #ffd166;
+  --green: #3fb96b;
+  --red: #e5534b;
+  --blue: #58a6ff;
+  --purple: #bc8cff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600;}
+a { color: var(--blue); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.muted { color: var(--muted); }
+header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 18px; margin-bottom: 14px;
+}
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
+}
+.badge.bitcoin { color: var(--accent2); border-color: #6b5518; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle;}
+.dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.grid { display: grid; gap: 14px; }
+.cards { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.cols { grid-template-columns: 1fr; }
+@media (min-width: 1100px) { .cols { grid-template-columns: 3fr 2fr; } }
+.card, .panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+}
+.card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.card .value { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums;}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;}
+td { padding: 7px 8px; border-bottom: 1px solid #1a212e; vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pill { display:inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.pill.green { background: rgba(63,185,107,.15); color: var(--green); }
+.pill.red { background: rgba(229,83,75,.15); color: var(--red); }
+.pill.amber { background: rgba(255,209,102,.12); color: var(--accent2); }
+.pill.gray { background: rgba(138,147,165,.15); color: var(--muted); }
+.pill.blue { background: rgba(88,166,255,.13); color: var(--blue); }
+.pill.purple { background: rgba(188,140,255,.14); color: var(--purple); }
+.liqbar { width: 140px; height: 7px; background: #232b3a; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle;}
+.liqbar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.id { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; cursor: pointer;}
+.scroll { max-height: 420px; overflow-y: auto; }
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li { padding: 7px 4px; border-bottom: 1px solid #1a212e; font-size: 13px; }
+.feed li:last-child { border-bottom: none; }
+.banner { background: rgba(229,83,75,.12); border: 1px solid var(--red); color: var(--red);
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; display: none; }
+footer { color: var(--muted); font-size: 12px; margin: 14px 4px; text-align: right;}
+.kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 12px; font-size: 13px; }
+.kv div:nth-child(odd) { color: var(--muted); }
+button.copy { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 4px;}
+button.copy:hover { color: var(--accent2); }
+.topnav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.topnav a {
+  padding: 6px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--muted); text-decoration: none;
+}
+.topnav a.current { color: var(--text); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ LDK Node Dashboard <span id="netbadge" class="badge">…</span></h1>
+  <div>
+    <span class="badge"><span id="conndot" class="dot err"></span><span id="connlabel">connecting…</span></span>
+    <span class="badge" title="Last refresh"><span id="updated" class="muted">never</span></span>
+  </div>
+</header>
+<nav class="topnav">
+  <a href="/" class="current">LDK node</a>
+  <a href="/kyoto">Kyoto</a>
+  <a href="/resources">Resources</a>
+  <!--CONTROL_LINK-->
+</nav>
+
+<div id="banner" class="banner"></div>
+
+<div class="grid cards" id="balances"></div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>Node</h2>
+    <div class="kv" id="nodeinfo"><span class="muted">loading…</span></div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>Channels <span id="chcount" class="badge"></span></h2>
+    <div class="scroll">
+    <table id="channels">
+      <thead><tr>
+        <th>Status</th><th>Counterparty</th><th>SCID</th>
+        <th class="num">Capacity</th><th class="num">Outbound</th><th class="num">Inbound</th><th></th>
+      </tr></thead>
+      <tbody id="chbody"><tr><td colspan="7" class="muted">loading…</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="grid cols" style="margin-top:14px">
+  <div class="panel">
+    <h2>Recent Payments <span id="paycount" class="badge"></span></h2>
+    <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>Time</th><th>Dir</th><th>ID</th><th>Kind</th><th class="num">Amount</th><th class="num">Fee</th><th>Status</th>
+      </tr></thead>
+      <tbody id="paybody"><tr><td colspan="7" class="muted">loading…</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+  <div>
+    <div class="panel" style="margin-bottom:14px">
+      <h2>Peers <span id="peercount" class="badge"></span></h2>
+      <div class="scroll" style="max-height:180px">
+      <table>
+        <thead><tr><th>Node</th><th>Address</th><th>State</th></tr></thead>
+        <tbody id="peerbody"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Activity <span class="muted" style="text-transform:none;letter-spacing:0">(live events)</span></h2>
+      <ul class="feed scroll" id="feed" style="max-height:220px"><li class="muted">waiting for events…</li></ul>
+    </div>
+  </div>
+</div>
+
+<footer>ldk-server-gui · auto-refreshes on node events</footer>
+
+<script>
+const fmtSats = v => v == null ? "—" : Math.round(v).toLocaleString("en-US") + " sat";
+const fmtMsatAsSats = v => v == null ? "—" : fmtSats(Math.floor(v / 1000));
+const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString() : "—";
+const ago = ts => {
+  if (!ts) return "never";
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+};
+const short = h => h ? h.slice(0, 10) + "…" + h.slice(-6) : "—";
+// ids/addresses render uniformly: truncated, full value in tooltip, copy button.
+const idSpan = (h, cls) => h
+  ? `<span class="${cls || "mono"}" title="${esc(h)}">${esc(short(h))}</span>${copyBtn(h)}`
+  : "—";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function copyBtn(text) {
+  return `<button class="copy" title="copy" data-copy="${esc(text)}">⧉</button>`;
+}
+// Delegated copy handler with fallbacks (set up once). Shows ✓/✗ feedback;
+// as a last resort offers the text in a prompt for manual copying.
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("button.copy");
+  if (!b) return;
+  e.preventDefault();
+  const text = b.dataset.copy || "";
+  const done = ok => {
+    b.textContent = ok ? "✓" : "✗";
+    setTimeout(() => { b.textContent = "⧉"; }, 1200);
+  };
+  const manual = () => { window.prompt("Copy manually (Ctrl+C):", text); done(false); };
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => done(true))
+      .catch(() => { if (!legacyCopy(text)) manual(); });
+  } else if (!legacyCopy(text)) manual();
+});
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { ta.setSelectionRange(0, text.length); } catch (_) {}
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) {}
+  ta.remove();
+  return ok;
+}
+
+function setConn(ok, label) {
+  document.getElementById("conndot").className = "dot " + (ok ? "ok" : "err");
+  document.getElementById("connlabel").textContent = label;
+}
+function showBanner(msg) {
+  const b = document.getElementById("banner");
+  if (msg) { b.textContent = msg; b.style.display = "block"; }
+  else b.style.display = "none";
+}
+
+function renderBalances(b) {
+  const el = document.getElementById("balances");
+  if (!b || b.error) { el.innerHTML = `<div class="card"><div class="label">Balances</div><div class="sub">unavailable</div></div>`; return; }
+  const lightning = Number(b.total_lightning_balance_sats ?? 0);
+  const onchain = Number(b.total_onchain_balance_sats ?? 0);
+  const total = lightning + onchain;
+  el.innerHTML = `
+    <div class="card"><div class="label">Total Balance</div><div class="value mono">${fmtSats(total)}</div>
+      <div class="sub">on-chain + lightning claimable</div></div>
+    <div class="card"><div class="label">On-Chain Spendable</div><div class="value mono">${fmtSats(b.spendable_onchain_balance_sats)}</div>
+      <div class="sub">of ${fmtSats(onchain)} total</div></div>
+    <div class="card"><div class="label">Lightning</div><div class="value mono">${fmtSats(lightning)}</div>
+      <div class="sub">${(b.lightning_balances || []).length} balance entr${(b.lightning_balances||[]).length===1?"y":"ies"}</div></div>
+    <div class="card"><div class="label">Anchor Reserve</div><div class="value mono">${fmtSats(b.total_anchor_channels_reserve_sats)}</div>
+      <div class="sub">pending sweeps: ${(b.pending_balances_from_channel_closures || []).length}</div></div>`;
+}
+
+// How long the node and its chain source (kyoto) have been running, from /api/kyoto. Kept here
+// because the node info block is redrawn on every snapshot.
+// Memory, CPU and traffic are on the Resources page; the uptimes stay here.
+const uptimes = { node: null, chain: null };
+function fmtUptime(s) {
+  if (s == null) return "—";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return (d ? `${d}d ` : "") + `${h}h ${m}m ${sec}s`;
+}
+function showUptimes() {
+  const node = document.getElementById("up-node"), chain = document.getElementById("up-chain");
+  if (node) node.textContent = fmtUptime(uptimes.node);
+  if (chain) chain.textContent = fmtUptime(uptimes.chain);
+}
+function refreshUptimes() {
+  fetch("/api/kyoto").then(r => r.json()).then(resp => {
+    uptimes.node = resp.node && resp.node.ok ? resp.node.data.uptime_seconds : null;
+    uptimes.chain = resp.kyoto && resp.kyoto.ok ? resp.kyoto.data.uptime_seconds : null;
+    showUptimes();
+  }).catch(() => {});
+}
+
+function renderNode(n) {
+  const el = document.getElementById("nodeinfo");
+  if (!n || n.error) { el.innerHTML = `<span class="muted">unavailable: ${esc(n && n.error)}</span>`; return; }
+  const net = (n.network || "?").toString().toLowerCase();
+  const badge = document.getElementById("netbadge");
+  badge.textContent = net;
+  badge.className = "badge " + (net === "bitcoin" ? "bitcoin" : "");
+  const bb = n.current_best_block || {};
+  el.innerHTML = `
+    <div>Alias</div><div>${esc(n.node_alias || "—")}</div>
+    <div>Node ID</div><div class="mono" style="word-break:break-all">${esc(n.node_id)} ${copyBtn(n.node_id)}</div>
+    <div>Chain tip</div><div class="mono">${bb.height ?? "—"} ${idSpan(bb.block_hash, "mono muted")}</div>
+    <div>On-chain synced</div><div>${ago(n.latest_onchain_wallet_sync_timestamp)}</div>
+    <div>Lightning synced</div><div>${ago(n.latest_lightning_wallet_sync_timestamp)}</div>
+    <div>Fee cache updated</div><div>${ago(n.latest_fee_rate_cache_update_timestamp)}</div>
+    <div>Node uptime</div><div id="up-node">${fmtUptime(uptimes.node)}</div>
+    <div>Chain source uptime</div><div id="up-chain">${fmtUptime(uptimes.chain)}</div>
+    <div>Listening</div><div class="mono">${(n.listening_addresses || []).map(esc).join("<br>") || "—"}</div>
+    <div>Announced URIs</div><div class="mono" style="word-break:break-all">${(n.node_uris || []).map(u => `${esc(u)} ${copyBtn(u)}`).join("<br>") || "—"}</div>`;
+}
+
+function statusPills(c) {
+  const pills = [];
+  if (c.is_usable) pills.push(`<span class="pill green">usable</span>`);
+  else if (c.is_channel_ready) pills.push(`<span class="pill blue">ready</span>`);
+  else pills.push(`<span class="pill amber">pending</span>`);
+  if (c.is_announced) pills.push(`<span class="pill gray">public</span>`);
+  // ChannelShutdownState: 0=unspecified, 1=not_shutting_down; >1 means a close is in progress.
+  if (c.channel_shutdown_state != null && c.channel_shutdown_state > 1) pills.push(`<span class="pill red">closing</span>`);
+  return pills.join(" ");
+}
+
+function renderChannels(resp) {
+  const body = document.getElementById("chbody");
+  const count = document.getElementById("chcount");
+  const chans = (resp && !resp.error && resp.channels) || [];
+  count.textContent = chans.length;
+  if (!chans.length) { body.innerHTML = `<tr><td colspan="7" class="muted">no channels</td></tr>`; return; }
+  chans.sort((a, b) => (b.is_usable - a.is_usable) || (b.channel_value_sats - a.channel_value_sats));
+  body.innerHTML = chans.map(c => {
+    const capMsat = (c.channel_value_sats || 0) * 1000;
+    const out = c.outbound_capacity_msat || 0;
+    const pct = capMsat > 0 ? Math.min(100, (out / capMsat) * 100) : 0;
+    return `<tr>
+      <td>${statusPills(c)}</td>
+      <td class="mono">${idSpan(c.counterparty_node_id)}</td>
+      <td class="mono muted">${c.short_channel_id ?? "—"}</td>
+      <td class="num mono">${fmtSats(c.channel_value_sats)}</td>
+      <td class="num mono">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
+      <td class="num mono">${fmtMsatAsSats(c.inbound_capacity_msat)}</td>
+      <td><div class="liqbar" title="outbound share"><div style="width:${pct.toFixed(1)}%"></div></div></td>
+    </tr>`;
+  }).join("");
+}
+
+function fundingTxids(resp) {
+  const chans = (resp && !resp.error && resp.channels) || [];
+  return new Set(chans.map(c => c.funding_txo && c.funding_txo.txid).filter(Boolean));
+}
+
+function paymentKind(p, openings) {
+  const k = p.kind;
+  if (!k) return "—";
+  const inner = k.kind || k;
+  const key = Object.keys(inner)[0];
+  if (!key) return "—";
+  if (key === "onchain") {
+    const oc = inner.onchain || {};
+    const tt = (oc.tx_type && (oc.tx_type.kind || oc.tx_type)) || {};
+    const ttKey = Object.keys(tt)[0];
+    if (ttKey === "funding" || ttKey === "interactive_funding"
+        || (oc.txid && openings.has(oc.txid))) {
+      return `<span class="pill purple">channel open</span>`;
+    }
+  }
+  return `<span class="pill purple">${esc(key.replace(/_/g, " "))}</span>`;
+}
+
+function renderPayments(resp, openings) {
+  const body = document.getElementById("paybody");
+  const count = document.getElementById("paycount");
+  const pays = (resp && !resp.error && resp.payments) || [];
+  count.textContent = pays.length + (resp && resp.next_page_token ? "+" : "");
+  if (!pays.length) { body.innerHTML = `<tr><td colspan="7" class="muted">no payments yet</td></tr>`; return; }
+  pays.sort((a, b) => (b.latest_update_timestamp || 0) - (a.latest_update_timestamp || 0));
+  const pill = { SUCCEEDED: "green", PENDING: "amber", FAILED: "red" };
+  body.innerHTML = pays.slice(0, 200).map(p => {
+    const dir = (p.direction || "").toUpperCase();
+    const st = (p.status || "").toUpperCase();
+    return `<tr title="${esc(p.payment_id)}" ${p.payment_id ? `data-pid="${esc(p.payment_id)}"` : ""}>
+      <td class="muted">${fmtTime(p.latest_update_timestamp)}</td>
+      <td>${dir === "INBOUND" ? '<span class="pill green">↓ in</span>' : dir === "OUTBOUND" ? '<span class="pill blue">↑ out</span>' : esc(dir)}</td>
+      <td class="mono">${idSpan(p.payment_id)}</td>
+      <td>${paymentKind(p, openings)}</td>
+      <td class="num mono">${fmtMsatAsSats(p.amount_msat)}</td>
+      <td class="num mono muted">${p.fee_paid_msat != null ? fmtMsatAsSats(p.fee_paid_msat) : "—"}</td>
+      <td><span class="pill ${pill[st] || "gray"}">${esc(st.toLowerCase() || "?")}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+function renderPeers(resp) {
+  const body = document.getElementById("peerbody");
+  const count = document.getElementById("peercount");
+  const peers = (resp && !resp.error && resp.peers) || [];
+  count.textContent = peers.filter(p => p.is_connected).length + "/" + peers.length;
+  if (!peers.length) { body.innerHTML = `<tr><td colspan="3" class="muted">no peers</td></tr>`; return; }
+  peers.sort((a, b) => b.is_connected - a.is_connected);
+  body.innerHTML = peers.map(p => `<tr>
+    <td class="mono">${idSpan(p.node_id)}</td>
+    <td class="mono muted">${idSpan(p.address, "mono muted")}</td>
+    <td>${p.is_connected ? '<span class="pill green">connected</span>' : '<span class="pill gray">offline</span>'}
+        ${p.is_persisted ? '<span class="pill gray">persisted</span>' : ""}</td>
+  </tr>`).join("");
+}
+
+function render(snap) {
+  document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
+  if (!snap.ok) setConn(false, "node unreachable");
+  else setConn(true, "live");
+  const errs = ["node", "balances", "channels", "payments", "peers"]
+    .filter(k => snap[k] && snap[k].error)
+    .map(k => `${k}: ${snap[k].error}`);
+  showBanner(errs.length ? "Some data unavailable — " + errs.join("; ") : null);
+  renderNode(snap.node);
+  renderBalances(snap.balances);
+  renderChannels(snap.channels);
+  renderPayments(snap.payments, fundingTxids(snap.channels));
+  renderPeers(snap.peers);
+}
+
+// activity feed
+function eventSummary(e) {
+  const d = (e.data && e.data[e.kind]) || e.data || {};
+  const pay = d.payment;
+  const amt = pay && pay.amount_msat != null ? " " + fmtMsatAsSats(pay.amount_msat) : "";
+  const labels = {
+    payment_received: "📥 payment received" + amt,
+    payment_successful: "✅ payment sent" + amt,
+    payment_failed: "❌ payment failed" + amt,
+    payment_forwarded: "🔁 payment forwarded" + (d.total_fee_earned_msat != null ? " · fee " + fmtMsatAsSats(d.total_fee_earned_msat) : ""),
+    payment_claimable: "⏳ payment claimable" + (d.claimable_amount_msat != null ? " " + fmtMsatAsSats(d.claimable_amount_msat) : ""),
+    channel_state_changed: "⚙️ channel " + idSpan(d.channel_id) + " → " + esc(String(d.state ?? "?").replace(/^CHANNEL_STATE_/, "").toLowerCase()),
+    splice_negotiated: "🔀 splice negotiated " + idSpan(d.channel_id),
+    splice_negotiation_failed: "🔀 splice failed " + idSpan(d.channel_id),
+    action: "🖱️ action: " + esc(d.summary || ""),
+    unknown: "event"
+  };
+  return labels[e.kind] || e.kind;
+}
+
+function addFeedEvent(e) {
+  const feed = document.getElementById("feed");
+  if (feed.querySelector(".muted") && feed.children.length === 1) feed.innerHTML = "";
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="muted">${new Date(e.received_at * 1000).toLocaleTimeString()}</span> ${eventSummary(e)}`;
+  feed.prepend(li);
+  while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+}
+
+// initial loads
+fetch("/api/snapshot").then(r => r.json()).then(render).catch(() => setConn(false, "backend error"));
+fetch("/api/activity").then(r => r.json()).then(items => items.slice().reverse().forEach(addFeedEvent)).catch(() => {});
+
+// live stream
+function connectStream() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = ev => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "snapshot") render(msg.payload);
+      else if (msg.type === "event") addFeedEvent(msg.payload);
+    } catch (_) {}
+  };
+  es.onerror = () => { es.close(); setTimeout(connectStream, 3000); };
+}
+connectStream();
+
+// fallback: periodic refetch in case SSE dies silently
+setInterval(() => fetch("/api/snapshot").then(r => r.json()).then(render).catch(() => {}), 15000);
+
+// uptimes of the node and the chain source
+refreshUptimes();
+setInterval(refreshUptimes, 10000);
+</script>
+<!--VERSIONS-->
+</body>
+</html>

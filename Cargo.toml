@@ -1,0 +1,18 @@
+[package]
+name = "ldk-server-gui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Web dashboard and control panel for an LDK Server node"
+
+[dependencies]
+ldk-server-client = { path = "../ldk-server/ldk-server-client", features = ["serde"] }
+axum = "0.8"
+# Plain-HTTP client for kyoto's stats endpoint; same version ldk-server-client already uses.
+reqwest = { version = "0.11", default-features = false }
+clap = { version = "4", features = ["derive"] }
+serde = "1"
+getrandom = "0.2"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1", features = ["sync"] }

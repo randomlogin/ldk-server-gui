@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kyoto Chain Source</title>
+<style>
+:root {
+  --bg: #0b0e14;
+  --panel: #12161f;
+  --panel2: #171d29;
+  --border: #232b3a;
+  --text: #d7dde8;
+  --muted: #8a93a5;
+  --accent: #f7931a;
+  --green: #3fb96b;
+  --red: #e5534b;
+  --blue: #58a6ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+a { color: var(--blue); }
+.muted { color: var(--muted); }
+header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 18px; margin-bottom: 14px;
+}
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+.dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.grid { display: grid; gap: 14px; }
+.cards { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.card, .panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+}
+.card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.card .value { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.panel { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 7px 8px; border-bottom: 1px solid #1a212e; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.banner { display: none; background: rgba(229,83,75,.12); border: 1px solid #6b2a26; color: var(--red); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
+.banner.show { display: block; }
+.topnav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.topnav a {
+  padding: 6px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--muted); text-decoration: none;
+}
+.topnav a.current { color: var(--text); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏯 Kyoto Chain Source</h1>
+  <div>
+    <span class="badge"><span id="conndot" class="dot err"></span><span id="connlabel">connecting…</span></span>
+    <span class="badge" title="Last refresh"><span id="updated" class="muted">never</span></span>
+  </div>
+</header>
+<nav class="topnav">
+  <a href="/">LDK node</a>
+  <a href="/kyoto" class="current">Kyoto</a>
+  <a href="/resources">Resources</a>
+  <!--CONTROL_LINK-->
+</nav>
+
+<h2>Chain activity <span class="muted">· from the node's /metrics</span></h2>
+<div id="cbf-banner" class="banner"></div>
+<div class="grid cards" id="cbf-cards"></div>
+
+<h2 style="margin-top:20px">Peer-to-peer network <span class="muted">· from kyoto</span></h2>
+<div id="banner" class="banner"></div>
+<div class="grid cards" id="cards"></div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>Connected peers <span id="peercount" class="badge"></span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Address</th><th class="num">Uptime</th>
+          <th class="num">Received</th><th class="num">Sent</th>
+          <th class="num">Msgs in</th><th class="num">Msgs out</th>
+        </tr>
+      </thead>
+      <tbody id="peerbody"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>Disconnected peers <span id="historycount" class="badge"></span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Address</th><th class="num">Connected at</th><th class="num">Lived</th>
+          <th class="num">Received</th><th class="num">Sent</th><th>Reason</th>
+        </tr>
+      </thead>
+      <tbody id="historybody"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>Chain source events <span id="eventcount" class="badge"></span>
+      <span class="muted">· from the node's log</span></h2>
+    <div id="eventbanner" class="banner"></div>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Event</th><th>Message</th></tr>
+      </thead>
+      <tbody id="eventbody"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return (d ? `${d}d ` : "") + `${h}h ${m}m ${sec}s`;
+}
+
+function fmtBytes(n) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${i ? n.toFixed(1) : n} ${units[i]}`;
+}
+
+function setConn(ok, label) {
+  $("conndot").className = "dot " + (ok ? "ok" : "err");
+  $("connlabel").textContent = label;
+}
+
+function card(label, value, sub) {
+  return `<div class="card"><div class="label">${label}</div>` +
+    `<div class="value">${value}</div><div class="sub">${sub || "&nbsp;"}</div></div>`;
+}
+
+function renderCbf(section) {
+  const banner = $("cbf-banner");
+  if (!section.ok) {
+    banner.textContent = section.error;
+    banner.classList.add("show");
+    $("cbf-cards").innerHTML = "";
+    return;
+  }
+  banner.classList.remove("show");
+  const c = section.data;
+  const n = k => (c[k] || 0);
+  const matchRate = n("filters_received")
+    ? `${(100 * n("filters_matched") / n("filters_received")).toFixed(2)}% of received` : "";
+  $("cbf-cards").innerHTML =
+    card("Filters received", n("filters_received").toLocaleString(), "checked against watched scripts") +
+    card("Filters matched", n("filters_matched").toLocaleString(), matchRate) +
+    card("Blocks requested", n("blocks_requested").toLocaleString(), "incl. retries and fee estimation") +
+    card("Blocks downloaded", n("blocks_downloaded").toLocaleString(),
+         `${n("matched_blocks_downloaded").toLocaleString()} for matched filters`) +
+    card("Scripts watched", (n("wallet_scripts") + n("ldk_scripts")).toLocaleString(),
+         `wallet ${n("wallet_scripts").toLocaleString()} · LDK ${n("ldk_scripts").toLocaleString()}`);
+}
+
+// Connections that ended, newest first, with why. kyoto keeps the last 200.
+function renderHistory(section) {
+  if (!section.ok) {
+    $("historycount").textContent = "";
+    $("historybody").innerHTML =
+      `<tr><td colspan="6" class="muted">history unavailable: ${esc(section.error)}</td></tr>`;
+    return;
+  }
+  const records = section.data.history.slice().reverse();
+  $("historycount").textContent = records.length;
+  $("historybody").innerHTML = records.length
+    ? records.map(r =>
+        `<tr><td>${esc(r.addr)}</td>` +
+        `<td class="num">${new Date(r.connected_at * 1000).toLocaleTimeString()}</td>` +
+        `<td class="num">${fmtUptime(r.lived_seconds)}</td>` +
+        `<td class="num">${fmtBytes(r.bytes_received)}</td><td class="num">${fmtBytes(r.bytes_sent)}</td>` +
+        `<td title="${esc(r.reason_kind)}">${esc(r.reason)}</td></tr>`
+      ).join("")
+    : `<tr><td colspan="6" class="muted">no connection has ended yet</td></tr>`;
+}
+
+// When the chain source started, was restarted after an error, or gave up, as the node logged it.
+// "gave_up" means it is down for good: the node keeps running but no longer follows the chain.
+const EVENT_LABELS = {
+  started: "started", restart: "restarted after an error", gave_up: "GAVE UP, down for good",
+  stopped: "stopped", start_failed: "could not start",
+};
+function renderEvents(resp) {
+  const banner = $("eventbanner");
+  if (!resp.ok) {
+    $("eventcount").textContent = "";
+    banner.classList.remove("show");
+    $("eventbody").innerHTML = `<tr><td colspan="3" class="muted">${esc(resp.error)}</td></tr>`;
+    return;
+  }
+  const events = resp.data;
+  $("eventcount").textContent = events.length;
+  const last = events[events.length - 1];
+  if (last && last.kind === "gave_up") {
+    banner.textContent = "The chain source gave up and is down: the node keeps running but no longer follows the chain. Restart the node.";
+    banner.classList.add("show");
+  } else {
+    banner.classList.remove("show");
+  }
+  $("eventbody").innerHTML = events.length
+    ? events.slice().reverse().map(e =>
+        `<tr><td>${new Date(e.time).toLocaleString()}</td>` +
+        `<td${e.kind === "gave_up" || e.kind === "start_failed" ? ' style="color:#f66"' : ""}>${esc(EVENT_LABELS[e.kind] || e.kind)}</td>` +
+        `<td class="muted" style="word-break:break-word">${esc(e.message)}</td></tr>`
+      ).join("")
+    : `<tr><td colspan="3" class="muted">no event in the part of the log that was searched</td></tr>`;
+}
+async function refreshEvents() {
+  try { renderEvents(await (await fetch("/api/chain-events")).json()); } catch (e) {}
+}
+
+function render(resp) {
+  renderCbf(resp.cbf);
+  renderKyoto(resp);
+  renderHistory(resp.history);
+}
+
+function renderKyoto(resp) {
+  const banner = $("banner");
+  if (!resp.kyoto.ok) {
+    setConn(false, "kyoto unreachable");
+    banner.textContent = resp.kyoto.error;
+    banner.classList.add("show");
+    $("cards").innerHTML = "";
+    $("peerbody").innerHTML = `<tr><td colspan="6" class="muted">no data</td></tr>`;
+    return;
+  }
+  banner.classList.remove("show");
+  setConn(true, "connected");
+  const s = resp.kyoto.data;
+
+  // Traffic totals, memory and CPU are on the Resources page.
+  $("cards").innerHTML =
+    card("Chain source uptime", fmtUptime(s.uptime_seconds), "kyoto, starts over if it restarts") +
+    card("Connected peers", s.connected_peers) +
+    card("Chain tip", s.tip_height == null ? "–" : s.tip_height.toLocaleString(), "height of the header chain");
+
+  $("peercount").textContent = s.peers.length;
+  $("peerbody").innerHTML = s.peers.length
+    ? s.peers.map(p =>
+        `<tr><td>${esc(p.addr)}</td><td class="num">${fmtUptime(p.uptime_seconds)}</td>` +
+        `<td class="num">${fmtBytes(p.bytes_received)}</td><td class="num">${fmtBytes(p.bytes_sent)}</td>` +
+        `<td class="num">${p.messages_received.toLocaleString()}</td>` +
+        `<td class="num">${p.messages_sent.toLocaleString()}</td></tr>`
+      ).join("")
+    : `<tr><td colspan="6" class="muted">no peers connected</td></tr>`;
+  $("updated").textContent = new Date().toLocaleTimeString();
+}
+
+async function refresh() {
+  try {
+    render(await (await fetch("/api/kyoto")).json());
+  } catch (e) {
+    setConn(false, "dashboard backend error");
+  }
+}
+
+refresh();
+setInterval(refresh, 2000);
+// The log is read from its end on every call, so this is checked less often than the rest.
+refreshEvents();
+setInterval(refreshEvents, 10000);
+</script>
+<!--VERSIONS-->
+</body>
+</html>

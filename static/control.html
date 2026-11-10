@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LDK Node Control</title>
+<style>
+:root {
+  --bg: #0b0e14;
+  --panel: #12161f;
+  --panel2: #171d29;
+  --border: #232b3a;
+  --text: #d7dde8;
+  --muted: #8a93a5;
+  --accent: #f7931a;
+  --accent2: #ffd166;
+  --green: #3fb96b;
+  --red: #e5534b;
+  --blue: #58a6ff;
+  --purple: #bc8cff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600;}
+a { color: var(--blue); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.muted { color: var(--muted); }
+header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 18px; margin-bottom: 14px;
+}
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 14px;
+}
+.grid { display: grid; gap: 14px; }
+.cols { grid-template-columns: 1fr; }
+@media (min-width: 1100px) { .cols { grid-template-columns: 1fr 1fr; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;}
+td { padding: 7px 8px; border-bottom: 1px solid #1a212e; vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pill { display:inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.pill.green { background: rgba(63,185,107,.15); color: var(--green); }
+.pill.red { background: rgba(229,83,75,.15); color: var(--red); }
+.pill.amber { background: rgba(255,209,102,.12); color: var(--accent2); }
+.pill.gray { background: rgba(138,147,165,.15); color: var(--muted); }
+.id { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; cursor: pointer;}
+.scroll { max-height: 420px; overflow-y: auto; }
+label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+label.inline { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 4px; text-transform: none; font-size: 13px; color: var(--text); }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 7px 10px; font: inherit; width: 100%;
+}
+textarea { min-height: 60px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+button.act {
+  margin-top: 10px; background: var(--accent); border: none; color: #1a1206; font-weight: 650;
+  border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 13px;
+}
+button.act:hover { background: var(--accent2); }
+button.act.danger { background: var(--red); color: #fff; }
+button.act.danger:hover { filter: brightness(1.15); }
+button.act.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+button.act.secondary:hover { border-color: var(--accent); }
+button.copy { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 4px;}
+button.copy:hover { color: var(--accent2); }
+details { border-top: 1px solid var(--border); padding: 8px 0; }
+details:first-of-type { border-top: none; }
+summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+summary:hover { color: var(--accent2); }
+#result { display: none; margin-top: 12px; border-radius: 10px; padding: 10px 14px; font-size: 13px; }
+#result.ok { display: block; background: rgba(63,185,107,.12); border: 1px solid var(--green); }
+#result.err { display: block; background: rgba(229,83,75,.12); border: 1px solid var(--red); }
+#paypreview { display: none; background: var(--panel2); border: 1px solid var(--accent);
+  border-radius: 10px; padding: 10px 14px; margin-top: 10px; }
+#paypreview table { margin-bottom: 8px; }
+#inflight { display: none; }
+.inflight-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 4px; border-bottom: 1px solid #1a212e; font-size: 13px; }
+.inflight-row:last-child { border-bottom: none; }
+.stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.stat .l { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.stat .v { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.statcards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+#result pre { white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; font-size: 12px; color: var(--muted); max-height: 240px; overflow-y: auto; }
+.bigout { background: var(--panel2); border: 1px solid var(--green); border-radius: 8px; padding: 10px;
+  margin-top: 10px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.banner { background: rgba(229,83,75,.12); border: 1px solid var(--red); color: var(--red);
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; display: none; }
+footer { color: var(--muted); font-size: 12px; margin: 14px 4px; text-align: right;}
+.topnav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.topnav a {
+  padding: 6px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--muted); text-decoration: none;
+}
+.topnav a.current { color: var(--text); border-color: var(--accent); }
+/* The last result: one row per field, a value is selected whole with one click. */
+.resrow { margin: 10px 0 0; }
+.reskey { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+.selall { user-select: all; cursor: copy; }
+/* Without a token the server has accepted, the buttons that send a command are dimmed and do nothing. */
+body.locked button.act:not(.secondary):not(.keep) { opacity: .4; cursor: not-allowed; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ LDK Node Control</h1>
+  <div>
+    <span class="badge" id="tokbadge">no token</span>
+  </div>
+</header>
+<nav class="topnav">
+  <a href="/">LDK node</a>
+  <a href="/kyoto">Kyoto</a>
+  <a href="/resources">Resources</a>
+  <a href="/control" class="current">Control</a>
+</nav>
+
+<div id="banner" class="banner"></div>
+
+<div class="panel" id="tokenpanel">
+  <h2>Action token</h2>
+  <div id="tokarea"></div>
+</div>
+
+<div class="panel">
+  <h2>Last result</h2>
+  <div id="result"></div>
+  <div class="muted" id="noresult">No action performed yet.</div>
+</div>
+
+<div class="panel" id="inflight">
+  <h2>Payments in flight</h2>
+  <div id="inflightlist"></div>
+</div>
+
+<div class="grid cols">
+<div>
+  <div class="panel">
+    <h2>Send payment</h2>
+    <details>
+      <summary>Pay BOLT11 invoice</summary>
+      <label for="b11inv">Invoice</label>
+      <textarea id="b11inv" placeholder="lnbc…" spellcheck="false"></textarea>
+      <label for="b11amt">Amount (sats) — only for zero-amount invoices</label>
+      <input type="number" id="b11amt" min="0" placeholder="leave empty if the invoice has an amount">
+      <button class="act" onclick="sendBolt11()">Pay invoice</button>
+    </details>
+    <details>
+      <summary>Pay BOLT12 offer</summary>
+      <label for="b12offer">Offer</label>
+      <textarea id="b12offer" placeholder="lno…" spellcheck="false"></textarea>
+      <label for="b12amt">Amount (sats) — only for zero-amount offers</label>
+      <input type="number" id="b12amt" min="0">
+      <label for="b12qty">Quantity (optional)</label>
+      <input type="number" id="b12qty" min="0">
+      <label for="b12note">Payer note (optional, visible to recipient)</label>
+      <input type="text" id="b12note">
+      <button class="act" onclick="sendBolt12()">Pay offer</button>
+    </details>
+    <details>
+      <summary>Keysend (spontaneous)</summary>
+      <label for="kspeer">From known peers (optional)</label>
+      <select id="kspeer" onchange="fillKeysendPeer(this)"><option value="">— manual entry —</option></select>
+      <label for="ksnode">Destination node ID</label>
+      <input type="text" id="ksnode" placeholder="02… / 03… (hex pubkey)" spellcheck="false">
+      <label for="ksamt">Amount (sats)</label>
+      <input type="number" id="ksamt" min="1">
+      <button class="act" onclick="sendKeysend()">Send keysend</button>
+    </details>
+    <div id="paypreview"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Receive payment (BOLT11 invoice)</h2>
+    <label for="recvamt">Amount (sats) — leave empty for a variable-amount invoice</label>
+    <input type="number" id="recvamt" min="0">
+    <label for="recvdesc">Description (optional)</label>
+    <input type="text" id="recvdesc">
+    <label for="recvexp">Expiry (seconds, default 86400)</label>
+    <input type="number" id="recvexp" min="0" placeholder="86400">
+    <button class="act" onclick="createInvoice()">Create invoice</button>
+    <div id="invoiceout"></div>
+  </div>
+
+  <div class="panel">
+    <h2>On-chain</h2>
+    <button class="act secondary" onclick="newAddress()">New receive address</button>
+    <div id="addrout"></div>
+    <details>
+      <summary>Send on-chain</summary>
+      <label for="osaddr">Destination address</label>
+      <input type="text" id="osaddr" spellcheck="false">
+      <label for="osamt">Amount (sats)</label>
+      <input type="number" id="osamt" min="0">
+      <label class="inline"><input type="checkbox" id="osall" onchange="document.getElementById('osamt').disabled=this.checked"> Send all funds (minus fees &amp; reserves)</label>
+      <label for="osfee">Fee rate (sat/vB, optional)</label>
+      <input type="number" id="osfee" min="0">
+      <button class="act" onclick="sendOnchain()">Send on-chain</button>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>Peers</h2>
+    <details>
+      <summary>Connect peer</summary>
+      <label for="peeruri">Node ID @ address</label>
+      <input type="text" id="peeruri" placeholder="02abcdef…@1.2.3.4:9735" spellcheck="false">
+      <label class="inline"><input type="checkbox" id="peerpersist"> Persist (reconnect on restart)</label>
+      <button class="act" onclick="connectPeer()">Connect</button>
+    </details>
+    <div class="scroll" style="max-height:220px">
+    <table>
+      <thead><tr><th>Node</th><th>Address</th><th>State</th><th></th></tr></thead>
+      <tbody id="peerbody"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="panel">
+    <h2>Open channel</h2>
+    <label for="ocpeer">From known peers (optional)</label>
+    <select id="ocpeer" onchange="fillOpenChannelPeer(this)"><option value="">— manual entry —</option></select>
+    <label for="ocuri">Counterparty (node ID @ host:port)</label>
+    <input type="text" id="ocuri" placeholder="02abcdef…@1.2.3.4:9735" spellcheck="false">
+    <label for="ocamt">Channel size (sats)</label>
+    <input type="number" id="ocamt" min="1">
+    <label for="ocpush">Push to counterparty (sats, optional)</label>
+    <input type="number" id="ocpush" min="0">
+    <label class="inline"><input type="checkbox" id="ocpublic"> Announce public channel</label>
+    <button class="act" onclick="openChannel()">Open channel</button>
+  </div>
+
+  <div class="panel">
+    <h2>Channel operations <span id="chcount" class="badge"></span></h2>
+    <label for="chpick">Channel</label>
+    <select id="chpick"></select>
+    <details>
+      <summary>Close channel (cooperative)</summary>
+      <button class="act danger" onclick="closeChannel(false)">Cooperative close</button>
+    </details>
+    <details>
+      <summary>Force close channel</summary>
+      <label for="fcreason">Reason (optional)</label>
+      <input type="text" id="fcreason">
+      <button class="act danger" onclick="closeChannel(true)">Force close</button>
+    </details>
+    <details>
+      <summary>Splice in (add funds)</summary>
+      <label for="siamt">Amount (sats)</label>
+      <input type="number" id="siamt" min="1">
+      <button class="act" onclick="spliceIn()">Splice in</button>
+    </details>
+    <details>
+      <summary>Splice out (remove funds)</summary>
+      <label for="soamt">Amount (sats)</label>
+      <input type="number" id="soamt" min="1">
+      <label for="soaddr">Destination address (optional, default: node wallet)</label>
+      <input type="text" id="soaddr" spellcheck="false">
+      <button class="act" onclick="spliceOut()">Splice out</button>
+    </details>
+    <details>
+      <summary>Update forwarding fees / CLTV</summary>
+      <label for="feeprop">Proportional fee (millionths)</label>
+      <input type="number" id="feeprop" min="0">
+      <label for="feebase">Base fee (msat)</label>
+      <input type="number" id="feebase" min="0">
+      <label for="feecltv">CLTV expiry delta</label>
+      <input type="number" id="feecltv" min="0">
+      <button class="act" onclick="updateFees()">Update channel config</button>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>Forwarding stats</h2>
+    <div>Tracking mode: <span id="trackmode" class="mono muted">…</span>
+      <button class="act secondary" style="margin:0 0 0 10px" onclick="loadStats()">Refresh</button>
+    </div>
+    <div class="statcards" id="feecards"></div>
+    <div class="scroll" style="margin-top:10px">
+    <table>
+      <thead><tr><th>Time</th><th>In channel</th><th>Out channel</th><th class="num">Amount</th><th class="num">Fee</th></tr></thead>
+      <tbody id="fwdbody"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
+    </table>
+    </div>
+    <button class="act secondary" id="fwdmore" style="display:none" onclick="loadStats(true)">Load more</button>
+    <details style="margin-top:10px">
+      <summary>Per-channel stats</summary>
+      <label for="chstatpick">Channel</label>
+      <select id="chstatpick"></select>
+      <button class="act secondary" onclick="channelStats()">Query</button>
+      <div id="chstatout"></div>
+    </details>
+  </div>
+</div>
+</div>
+
+<footer>ldk-server-gui · control panel</footer>
+
+<script>
+const TOKEN_KEY = "ldk-action-token";
+const fmtSats = v => v == null ? "—" : Math.round(v).toLocaleString("en-US") + " sat";
+const fmtMsatAsSats = v => v == null ? "—" : fmtSats(Math.floor(v / 1000));
+const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString() : "—";
+const short = h => h ? String(h).slice(0, 10) + "…" + String(h).slice(-6) : "—";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// ids/addresses render uniformly: truncated, full value in tooltip, copy button.
+const idSpan = (h, cls) => h
+  ? `<span class="${cls || "mono"}" title="${esc(h)}">${esc(short(h))}</span>${copyBtn(h)}`
+  : "—";
+const val = id => document.getElementById(id).value.trim();
+const num = id => { const v = val(id); return v === "" ? null : Number(v); };
+
+function copyBtn(text) {
+  return `<button class="copy" title="copy" data-copy="${esc(text)}">⧉</button>`;
+}
+// Delegated copy handler with fallbacks (set up once). Shows ✓/✗ feedback;
+// as a last resort offers the text in a prompt for manual copying.
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("button.copy");
+  if (!b) return;
+  e.preventDefault();
+  const text = b.dataset.copy || "";
+  const done = ok => {
+    b.textContent = ok ? "✓" : "✗";
+    setTimeout(() => { b.textContent = "⧉"; }, 1200);
+  };
+  const manual = () => { window.prompt("Copy manually (Ctrl+C):", text); done(false); };
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => done(true))
+      .catch(() => { if (!legacyCopy(text)) manual(); });
+  } else if (!legacyCopy(text)) manual();
+});
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { ta.setSelectionRange(0, text.length); } catch (_) {}
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) {}
+  ta.remove();
+  return ok;
+}
+function showBanner(msg) {
+  const b = document.getElementById("banner");
+  if (msg) { b.textContent = msg; b.style.display = "block"; }
+  else b.style.display = "none";
+}
+
+// --- action token ---
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ""; }
+
+// What is known about the stored token: "none" (there is none), "checking", "ok" (the server accepted
+// it), "bad" (the server refused it) or "unknown" (the server could not be asked). Commands are only
+// sent when it is "ok". The server checks the token on every command as well; this stops a wrong one
+// being sent at all.
+let tokenState = "none";
+
+async function verifyToken(token) {
+  try {
+    const r = await fetch("/api/actions/check", { method: "POST", headers: { "x-action-token": token } });
+    return r.ok ? "ok" : (r.status === 403 ? "bad" : "unknown");
+  } catch (e) { return "unknown"; }
+}
+function setTokenState(state) {
+  tokenState = state;
+  // The buttons that send a command are dimmed and do nothing until the token is confirmed.
+  document.body.classList.toggle("locked", state !== "ok");
+  renderTokenArea();
+}
+async function initToken() {
+  const stored = getToken();
+  if (!stored) { setTokenState("none"); return; }
+  setTokenState("checking");
+  setTokenState(await verifyToken(stored));
+}
+
+function renderTokenArea() {
+  const area = document.getElementById("tokarea");
+  const badge = document.getElementById("tokbadge");
+  const entry = `<p class="muted" style="margin:4px 0">Paste the action token: printed to the console when
+      the GUI was started with --enable-actions, or the content of the file given with --action-token-file.
+      It is required for every command and stored only in this browser.</p>
+      <input type="password" id="tokinput" placeholder="action token" autocomplete="off">
+      <button class="act keep" onclick="saveToken()">Check and save token</button>`;
+  const clear = `<button class="act secondary" onclick="clearToken()">Clear token</button>`;
+  if (tokenState === "ok") {
+    badge.textContent = "token ok";
+    area.innerHTML = `<span class="muted">The action token is stored in this browser and the server accepted it.</span> ${clear}`;
+  } else if (tokenState === "checking") {
+    badge.textContent = "checking token…";
+    area.innerHTML = `<span class="muted">Asking the server whether the stored token is right…</span>`;
+  } else if (tokenState === "bad") {
+    badge.textContent = "token wrong";
+    area.innerHTML = `<p style="margin:4px 0;color:var(--red)">The stored token is not correct, so no command is sent. The dashboard may have been
+      restarted with a different token. Enter the right one:</p>${entry}`;
+  } else if (tokenState === "unknown") {
+    badge.textContent = "token not checked";
+    area.innerHTML = `<p style="margin:4px 0;color:var(--red)">The server could not be reached to check the stored token, so no command is sent.</p>
+      <button class="act keep" onclick="initToken()">Check again</button> ${clear}`;
+  } else {
+    badge.textContent = "no token";
+    area.innerHTML = entry;
+  }
+}
+async function saveToken() {
+  const t = val("tokinput");
+  // The server takes any token of at least 24 printable characters: 32 hex when it makes one itself,
+  // whatever the file holds with --action-token-file.
+  if (!/^[\x21-\x7e]{24,}$/.test(t)) { showBanner("That doesn't look like the action token (at least 24 characters, no spaces)."); return; }
+  // It is only kept if the server says it is the right one.
+  const state = await verifyToken(t);
+  if (state === "bad") { showBanner("That token is not correct."); return; }
+  if (state !== "ok") { showBanner("The server could not be reached to check the token. Try again."); return; }
+  localStorage.setItem(TOKEN_KEY, t);
+  showBanner(null);
+  setTokenState("ok");
+}
+function clearToken() {
+  if (confirm("Forget the stored action token?")) { localStorage.removeItem(TOKEN_KEY); setTokenState("none"); }
+}
+
+// --- action plumbing ---
+async function action(path, body) {
+  if (tokenState !== "ok") {
+    showBanner(tokenState === "bad" ? "The action token is not correct: enter the right one above."
+      : "Enter the action token above first: no command is sent without a token the server has accepted.");
+    return null;
+  }
+  let r, j;
+  try {
+    r = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-action-token": getToken() },
+      body: JSON.stringify(body || {}),
+    });
+  } catch (e) { showResult({ ok: false, error: "request failed: " + e }); return null; }
+  try { j = await r.json(); }
+  catch { j = { ok: false, error: "backend returned HTTP " + r.status }; }
+  if (!r.ok) j.ok = false;
+  // The server refused the token: it changed after the page checked it. Stop sending commands.
+  if (r.status === 403) setTokenState("bad");
+  showResult(j);
+  if (j.ok) {
+    refreshSnapshot();
+    if (j.payment_id) trackPayment(j.payment_id, path);
+  }
+  return j;
+}
+function showResult(j) {
+  const el = document.getElementById("result");
+  document.getElementById("noresult").style.display = "none";
+  el.className = j.ok ? "ok" : "err";
+  el.id = "result";
+  // One row per field. A text value (an invoice, a hash, an address) sits in its own block that is
+  // selected whole with one click, and has a copy button. Anything else is shown as JSON.
+  const rows = Object.entries(j).filter(([key]) => key !== "ok").map(([key, value]) => {
+    if (typeof value === "string") {
+      return `<div class="resrow"><div class="reskey">${esc(key)}</div>` +
+        `<div class="bigout"><span class="selall">${esc(value)}</span> ${copyBtn(value)}</div></div>`;
+    }
+    const text = typeof value === "object" && value !== null ? JSON.stringify(value, null, 2) : String(value);
+    return `<div class="resrow"><div class="reskey">${esc(key)} ${copyBtn(text)}</div>` +
+      `<pre>${esc(text)}</pre></div>`;
+  });
+  el.innerHTML = (j.ok ? "✅ Success" : "❌ Error") + rows.join("");
+}
+function need(cond, msg) { if (!cond) { showBanner(msg); return true; } return false; }
+function isHex(s) { return s.length > 0 && s.length % 2 === 0 && /^[0-9a-f]+$/i.test(s); }
+
+// --- live payment tracking ---
+const PAY_LABELS = {
+  "/api/actions/bolt11-send": "BOLT11 payment",
+  "/api/actions/bolt12-send": "BOLT12 payment",
+  "/api/actions/spontaneous-send": "Keysend",
+};
+const inflight = {}; // payment_id -> row element
+function trackPayment(id, path) {
+  document.getElementById("inflight").style.display = "block";
+  const row = document.createElement("div");
+  row.className = "inflight-row";
+  row.innerHTML = `<span>💸 ${esc(PAY_LABELS[path] || "payment")} ·
+    ${idSpan(id, "mono muted")}</span>
+    <span class="pill amber">pending</span>`;
+  document.getElementById("inflightlist").prepend(row);
+  inflight[id] = row;
+}
+function settlePayment(e) {
+  const d = (e.data && e.data[e.kind]) || e.data || {};
+  const id = d.payment && d.payment.payment_id;
+  const row = id && inflight[id];
+  if (!row) return;
+  delete inflight[id];
+  const ok = e.kind === "payment_successful";
+  const fee = ok && d.fee_paid_msat != null ? " · fee " + fmtMsatAsSats(d.fee_paid_msat) : "";
+  row.lastElementChild.outerHTML =
+    `<span class="pill ${ok ? "green" : "red"}">${ok ? "succeeded" + fee : "failed"}</span>`;
+  setTimeout(() => {
+    row.remove();
+    if (!document.getElementById("inflightlist").children.length)
+      document.getElementById("inflight").style.display = "none";
+  }, 60000);
+}
+
+// Live updates: settle in-flight payments immediately and refresh the
+// channel/peer/pick data the moment the node reports a new snapshot.
+function connectStream() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = ev => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "event") settlePayment(msg.payload);
+      else if (msg.type === "snapshot") {
+        lastSnap = msg.payload;
+        renderSnapshot(msg.payload);
+        maybeLoadFeeTotals();
+      }
+    } catch (_) {}
+  };
+  es.onerror = () => { es.close(); setTimeout(connectStream, 3000); };
+}
+connectStream();
+
+// --- payments ---
+// Decode-then-confirm flow: the invoice/offer is decoded by the node first,
+// the decoded details are shown inline, and only "Confirm & pay" sends.
+let pendingAction = null;
+
+const decodePost = async (path, body) => {
+  let j;
+  try {
+    const r = await fetch(path, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    j = await r.json();
+  } catch (e) { showResult({ ok: false, error: "decode request failed: " + e }); return null; }
+  if (!j.ok) { showResult(j); return null; }
+  return j;
+};
+
+function nodeNetwork() {
+  const n = lastSnap && lastSnap.node;
+  return (n && n.network ? String(n.network) : "").toLowerCase();
+}
+
+function showPaymentPreview(p) {
+  // p: { title, rows: [[k, html]], warnings: [str], path, body, clearIds }
+  const el = document.getElementById("paypreview");
+  pendingAction = { path: p.path, body: p.body, clearIds: p.clearIds || [] };
+  el.style.display = "block";
+  el.innerHTML = `<h2 style="margin-bottom:6px">${esc(p.title)}</h2>
+    <table>${p.rows.map(([k, v]) => `<tr><td class="muted" style="white-space:nowrap">${esc(k)}</td><td>${v}</td></tr>`).join("")}</table>
+    ${p.warnings.map(w => `<div><span class="pill red">⚠ ${esc(w)}</span></div>`).join("")}
+    <div style="margin-top:8px">
+      <button class="act" onclick="confirmPending()">Confirm &amp; pay</button>
+      <button class="act secondary" onclick="cancelPending()">Cancel</button>
+    </div>`;
+}
+async function confirmPending() {
+  if (!pendingAction) return;
+  const { path, body, clearIds } = pendingAction;
+  cancelPending();
+  const j = await action(path, body);
+  if (j && j.ok) clearIds.forEach(id => { document.getElementById(id).value = ""; });
+}
+function cancelPending() {
+  pendingAction = null;
+  const el = document.getElementById("paypreview");
+  el.style.display = "none";
+  el.innerHTML = "";
+}
+
+async function sendBolt11() {
+  const invoice = val("b11inv");
+  if (need(invoice.toLowerCase().startsWith("ln"), "Enter a bolt11 invoice (starts with ln…).")) return;
+  const amountSats = num("b11amt");
+  const d = await decodePost("/api/decode-invoice", { invoice });
+  if (!d) return;
+  const warnings = [];
+  if (d.is_expired) warnings.push("invoice is expired");
+  const net = nodeNetwork();
+  if (d.currency && net && d.currency.toLowerCase() !== net)
+    warnings.push(`invoice is on '${d.currency}' but the node is on '${net}'`);
+  if (!d.amount_msat && !amountSats)
+    warnings.push("zero-amount invoice — set the amount field before paying");
+  if (d.amount_msat && amountSats)
+    warnings.push("invoice has an amount; your amount field will be ignored");
+  const payAmt = d.amount_msat ?? (amountSats ? amountSats * 1000 : null);
+  showPaymentPreview({
+    title: "Pay BOLT11 invoice",
+    rows: [
+      ["Amount", `<span class="mono">${d.amount_msat ? fmtMsatAsSats(d.amount_msat) : (amountSats ? fmtSats(amountSats) + " (from amount field)" : "not set")}</span>`],
+      ["Payee", idSpan(d.destination)],
+      ["Description", esc(d.description || (d.description_hash ? "hash: " + short(d.description_hash) : "—"))],
+      ["Created", `<span class="muted">${fmtTime(d.timestamp)}</span>`],
+      ["Expiry", `<span class="muted">${d.expiry}s</span>`],
+      ["Payment hash", idSpan(d.payment_hash, "mono muted")],
+    ],
+    warnings,
+    path: "/api/actions/bolt11-send",
+    body: { invoice, amount_msat: amountSats && !d.amount_msat ? amountSats * 1000 : null },
+    clearIds: ["b11inv", "b11amt"],
+  });
+}
+async function sendBolt12() {
+  const offer = val("b12offer");
+  if (need(offer.toLowerCase().startsWith("lno"), "Enter a bolt12 offer (starts with lno…).")) return;
+  const amountSats = num("b12amt");
+  const d = await decodePost("/api/decode-offer", { offer });
+  if (!d) return;
+  const warnings = [];
+  if (d.is_expired) warnings.push("offer is expired");
+  const amtMsat = d.amount && d.amount.bitcoin_amount_msats ? Number(d.amount.bitcoin_amount_msats) : null;
+  const fiatAmt = d.amount && d.amount.currency_amount
+    ? `${d.amount.currency_amount.iso4217_code} ...` : null;
+  if (!amtMsat && !fiatAmt && !amountSats)
+    warnings.push("zero-amount offer — set the amount field before paying");
+  const chains = (d.chains || []).join(", ") || "—";
+  showPaymentPreview({
+    title: "Pay BOLT12 offer",
+    rows: [
+      ["Amount", `<span class="mono">${amtMsat ? fmtMsatAsSats(amtMsat) : fiatAmt ? esc(fiatAmt) : (amountSats ? fmtSats(amountSats) + " (from amount field)" : "not set")}</span>`],
+      ["Offer ID", idSpan(d.offer_id, "mono muted")],
+      ["Description", esc(d.description || "—")],
+      ["Issuer", esc(d.issuer || "—")],
+      ["Chains", `<span class="muted">${esc(chains)}</span>`],
+      ["Absolute expiry", `<span class="muted">${d.absolute_expiry ? fmtTime(d.absolute_expiry) : "—"}</span>`],
+    ],
+    warnings,
+    path: "/api/actions/bolt12-send",
+    body: { offer, amount_msat: amountSats ? amountSats * 1000 : null,
+      quantity: num("b12qty"), payer_note: val("b12note") || null },
+    clearIds: ["b12offer", "b12amt", "b12qty", "b12note"],
+  });
+}
+async function sendKeysend() {
+  const nodeId = val("ksnode");
+  if (need(nodeId.length === 66 && isHex(nodeId), "Enter a valid node ID (66 hex chars).")) return;
+  const amountMsat = num("ksamt");
+  if (need(amountMsat && amountMsat > 0, "Enter an amount in sats.")) return;
+  if (!confirm(`Keysend ${amountMsat.toLocaleString()} sat to ${short(nodeId)}?`)) return;
+  await action("/api/actions/spontaneous-send", { node_id: nodeId, amount_msat: amountMsat * 1000 });
+}
+async function createInvoice() {
+  const amountMsat = num("recvamt");
+  const j = await action("/api/actions/bolt11-receive", {
+    amount_msat: amountMsat ? amountMsat * 1000 : null,
+    description: val("recvdesc") || null,
+    expiry_secs: num("recvexp"),
+  });
+  if (j && j.ok && j.invoice) {
+    document.getElementById("invoiceout").innerHTML =
+      `<div class="bigout">${esc(j.invoice)} ${copyBtn(j.invoice)}</div>`;
+  }
+}
+
+// --- on-chain ---
+async function newAddress() {
+  const j = await action("/api/actions/onchain-receive", {});
+  if (j && j.ok && j.address) {
+    document.getElementById("addrout").innerHTML =
+      `<div class="bigout">${esc(j.address)} ${copyBtn(j.address)}</div>`;
+  }
+}
+async function sendOnchain() {
+  const address = val("osaddr");
+  if (need(address, "Enter a destination address.")) return;
+  const all = document.getElementById("osall").checked;
+  const amountSats = num("osamt");
+  if (need(all || (amountSats && amountSats > 0), "Enter an amount or check 'send all funds'.")) return;
+  if (!confirm(`Send ${all ? "ALL FUNDS" : amountSats.toLocaleString() + " sat"} on-chain to ${short(address)}?`)) return;
+  await action("/api/actions/onchain-send",
+    { address, amount_sats: all ? null : amountSats, all_funds: all, fee_rate_sat_per_vb: num("osfee") });
+}
+
+// --- channels ---
+async function openChannel() {
+  const uri = val("ocuri"), amountSats = num("ocamt");
+  const at = uri.indexOf("@");
+  if (need(at > 0, "Enter the counterparty as node_id@host:port.")) return;
+  const node = uri.slice(0, at), address = uri.slice(at + 1);
+  if (need(node.length === 66 && isHex(node), "Invalid node ID (expected 66 hex chars).")) return;
+  if (need(address.includes(":"), "Missing or invalid host:port after '@'.")) return;
+  if (need(amountSats && amountSats > 0, "Enter the channel size in sats.")) return;
+  const pushMsat = num("ocpush");
+  if (!confirm(`Open a ${amountSats.toLocaleString()} sat channel to ${short(node)}@${address}?`)) return;
+  await action("/api/actions/open-channel", {
+    node_pubkey: node, address, amount_sats: amountSats,
+    push_to_counterparty_msat: pushMsat ? pushMsat * 1000 : null,
+    announce_channel: document.getElementById("ocpublic").checked,
+  });
+}
+function pickedChannel() {
+  const sel = document.getElementById("chpick");
+  return channelsById[sel.value] || null;
+}
+async function closeChannel(force) {
+  const c = pickedChannel();
+  if (!c) { showBanner("No channel selected."); return; }
+  const what = force ? "FORCE-close" : "cooperatively close";
+  const msg = `${what} the ${fmtSats(c.channel_value_sats)} channel with ${short(c.counterparty_node_id)}?`
+    + (force ? "\n\nThis broadcasts the commitment transaction and starts a timelock." : "");
+  if (!confirm(msg)) return;
+  const body = { user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id };
+  if (force) body.reason = val("fcreason") || null;
+  await action(force ? "/api/actions/force-close-channel" : "/api/actions/close-channel", body);
+}
+async function spliceIn() {
+  const c = pickedChannel();
+  if (!c) { showBanner("No channel selected."); return; }
+  const amountSats = num("siamt");
+  if (need(amountSats && amountSats > 0, "Enter the splice-in amount in sats.")) return;
+  if (!confirm(`Splice ${amountSats.toLocaleString()} sat INTO the channel with ${short(c.counterparty_node_id)}?`)) return;
+  await action("/api/actions/splice-in", {
+    user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
+    splice_amount_sats: amountSats });
+}
+async function spliceOut() {
+  const c = pickedChannel();
+  if (!c) { showBanner("No channel selected."); return; }
+  const amountSats = num("soamt");
+  if (need(amountSats && amountSats > 0, "Enter the splice-out amount in sats.")) return;
+  if (!confirm(`Splice ${amountSats.toLocaleString()} sat OUT of the channel with ${short(c.counterparty_node_id)}?`)) return;
+  await action("/api/actions/splice-out", {
+    user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
+    address: val("soaddr") || null, splice_amount_sats: amountSats });
+}
+async function updateFees() {
+  const c = pickedChannel();
+  if (!c) { showBanner("No channel selected."); return; }
+  const body = { user_channel_id: c.user_channel_id, counterparty_node_id: c.counterparty_node_id,
+    forwarding_fee_proportional_millionths: num("feeprop"),
+    forwarding_fee_base_msat: num("feebase"), cltv_expiry_delta: num("feecltv") };
+  if (!body.forwarding_fee_proportional_millionths && !body.forwarding_fee_base_msat && !body.cltv_expiry_delta) {
+    showBanner("Fill at least one config field."); return;
+  }
+  await action("/api/actions/update-channel-config", body);
+}
+
+// --- peers ---
+async function connectPeer() {
+  const uri = val("peeruri");
+  if (need(uri.includes("@"), "Enter as pubkey@host:port.")) return;
+  if (!confirm(`Connect to peer ${uri}?`)) return;
+  await action("/api/actions/connect-peer",
+    { node_pubkey: uri, persist: document.getElementById("peerpersist").checked });
+}
+async function disconnectPeer(nodeId) {
+  if (!confirm(`Disconnect peer ${short(nodeId)}?`)) return;
+  await action("/api/actions/disconnect-peer", { node_pubkey: nodeId });
+}
+
+// --- snapshot-driven UI (channels/peers) ---
+let channelsById = {};
+let peersById = {};
+function peerOptionText(p) {
+  return `${short(p.node_id)} · ${p.address}${p.is_connected ? " · connected" : " · offline"}`;
+}
+function fillOpenChannelPeer(sel) {
+  const p = peersById[sel.value];
+  if (p) document.getElementById("ocuri").value = p.node_id + "@" + p.address;
+}
+function fillKeysendPeer(sel) {
+  const p = peersById[sel.value];
+  if (p) document.getElementById("ksnode").value = p.node_id;
+}
+function renderPeerPickers(peers) {
+  for (const id of ["ocpeer", "kspeer"]) {
+    const sel = document.getElementById(id);
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">— manual entry —</option>` + peers.map(p =>
+      `<option value="${esc(p.node_id)}">${esc(peerOptionText(p))}</option>`).join("");
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+}
+function renderSnapshot(snap) {
+  const chans = (snap.channels && !snap.channels.error && snap.channels.channels) || [];
+  channelsById = {};
+  chans.forEach(c => { channelsById[c.user_channel_id] = c; });
+  const opts = chans.map(c =>
+    `<option value="${esc(c.user_channel_id)}">${esc(short(c.counterparty_node_id))} · ${fmtSats(c.channel_value_sats)}${c.is_usable ? "" : " (not usable)"}</option>`);
+  const selHtml = opts.join("") || `<option value="">no channels</option>`;
+  for (const id of ["chpick", "chstatpick"]) {
+    const sel = document.getElementById(id);
+    const prev = sel.value;
+    if (id === "chstatpick")
+      sel.innerHTML = chans.map(c => `<option value="${esc(c.channel_id)}">${esc(short(c.counterparty_node_id))} · ${fmtSats(c.channel_value_sats)}</option>`).join("") || `<option value="">no channels</option>`;
+    else sel.innerHTML = selHtml;
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+  document.getElementById("chcount").textContent = chans.length;
+
+  const peers = (snap.peers && !snap.peers.error && snap.peers.peers) || [];
+  peersById = {};
+  peers.forEach(p => { peersById[p.node_id] = p; });
+  renderPeerPickers(peers);
+  const pb = document.getElementById("peerbody");
+  peers.sort((a, b) => b.is_connected - a.is_connected);
+  pb.innerHTML = peers.length ? peers.map(p => `<tr>
+    <td class="mono">${idSpan(p.node_id)}</td>
+    <td class="mono muted">${idSpan(p.address, "mono muted")}</td>
+    <td>${p.is_connected ? '<span class="pill green">connected</span>' : '<span class="pill gray">offline</span>'}
+        ${p.is_persisted ? '<span class="pill gray">persisted</span>' : ""}</td>
+    <td>${p.is_connected ? `<button class="act secondary" style="margin:0;padding:3px 10px" onclick="disconnectPeer('${esc(p.node_id)}')">Disconnect</button>` : ""}</td>
+  </tr>`).join("") : `<tr><td colspan="4" class="muted">no peers</td></tr>`;
+}
+let lastSnap = null;
+async function refreshSnapshot() {
+  try {
+    const snap = await (await fetch("/api/snapshot")).json();
+    lastSnap = snap;
+    renderSnapshot(snap);
+    maybeLoadFeeTotals();
+  } catch (_) {}
+}
+refreshSnapshot();
+setInterval(refreshSnapshot, 15000);
+
+// --- forwarding stats ---
+let fwdNextPage = null;
+let lastTotalsAt = 0;
+async function loadFeeTotals() {
+  lastTotalsAt = Date.now();
+  const el = document.getElementById("feecards");
+  const ids = Object.values(channelsById).map(c => c.channel_id).filter(Boolean);
+  if (!ids.length) { el.innerHTML = ""; return; }
+  const results = await Promise.all(ids.map(async id => {
+    try {
+      const j = await (await fetch("/api/stats/channel/" + encodeURIComponent(id))).json();
+      return j.ok ? j.stats : null;
+    } catch (_) { return null; }
+  }));
+  const stats = results.filter(Boolean);
+  const fees = stats.reduce((a, s) => a + Number(s.total_fee_earned_msat || 0), 0);
+  const forwards = stats.reduce((a, s) =>
+    a + Number(s.inbound_payments_forwarded || 0) + Number(s.outbound_payments_forwarded || 0), 0);
+  const volume = stats.reduce((a, s) => a + Number(s.total_outbound_amount_msat || 0), 0);
+  el.innerHTML = `
+    <div class="stat"><div class="l">Fees earned</div><div class="v mono">${fmtMsatAsSats(fees)}</div></div>
+    <div class="stat"><div class="l">Forwards</div><div class="v mono">${forwards}</div></div>
+    <div class="stat"><div class="l">Volume routed</div><div class="v mono">${fmtMsatAsSats(volume)}</div></div>
+    <div class="muted" style="grid-column:1/-1;font-size:11px">Totals across currently listed channels; history of closed channels isn't included.</div>`;
+}
+function maybeLoadFeeTotals() {
+  if (Date.now() - lastTotalsAt > 60000) loadFeeTotals();
+}
+async function loadStats(more) {
+  try {
+    const tm = await (await fetch("/api/stats/tracking-mode")).json();
+    document.getElementById("trackmode").textContent =
+      tm.ok ? String(tm.mode ?? "?") : "error: " + tm.error;
+  } catch (_) { document.getElementById("trackmode").textContent = "unavailable"; }
+
+  const url = "/api/stats/forwarded-payments" + (more && fwdNextPage ? "?page_token=" + encodeURIComponent(fwdNextPage) : "");
+  let j;
+  try { j = await (await fetch(url)).json(); }
+  catch (_) { return; }
+  const body = document.getElementById("fwdbody");
+  if (!j.ok) { if (!more) body.innerHTML = `<tr><td colspan="5" class="muted">${esc(j.error || "unavailable")}</td></tr>`; return; }
+  const rows = (j.forwarded_payments || []).map(p => `<tr>
+    <td class="muted">${fmtTime(p.forwarded_at_timestamp)}</td>
+    <td class="mono muted">${idSpan(p.prev_channel_id, "mono muted")}</td>
+    <td class="mono muted">${idSpan(p.next_channel_id, "mono muted")}</td>
+    <td class="num mono">${fmtMsatAsSats(p.outbound_amount_forwarded_msat ?? p.inbound_amount_forwarded_msat)}</td>
+    <td class="num mono">${fmtMsatAsSats(p.total_fee_earned_msat)}</td>
+  </tr>`);
+  if (!more) body.innerHTML = rows.join("") || `<tr><td colspan="5" class="muted">no forwarded payments recorded</td></tr>`;
+  else body.insertAdjacentHTML("beforeend", rows.join(""));
+  fwdNextPage = j.next_page_token || null;
+  document.getElementById("fwdmore").style.display = fwdNextPage ? "inline-block" : "none";
+  loadFeeTotals();
+}
+async function channelStats() {
+  const channelId = document.getElementById("chstatpick").value;
+  const out = document.getElementById("chstatout");
+  if (!channelId) { out.innerHTML = `<div class="muted" style="margin-top:8px">No channel selected.</div>`; return; }
+  let j;
+  try { j = await (await fetch("/api/stats/channel/" + encodeURIComponent(channelId))).json(); }
+  catch (_) { out.innerHTML = `<div class="muted" style="margin-top:8px">request failed</div>`; return; }
+  if (!j.ok) { out.innerHTML = `<div class="muted" style="margin-top:8px">${esc(j.error)}</div>`; return; }
+  const s = j.stats;
+  if (!s) { out.innerHTML = `<div class="muted" style="margin-top:8px">No stored record for this channel.</div>`; return; }
+  out.innerHTML = `<table style="margin-top:8px">
+    <tr><td class="muted">Inbound forwards</td><td class="num mono">${s.inbound_payments_forwarded ?? 0}</td></tr>
+    <tr><td class="muted">Outbound forwards</td><td class="num mono">${s.outbound_payments_forwarded ?? 0}</td></tr>
+    <tr><td class="muted">Total inbound</td><td class="num mono">${fmtMsatAsSats(s.total_inbound_amount_msat)}</td></tr>
+    <tr><td class="muted">Total outbound</td><td class="num mono">${fmtMsatAsSats(s.total_outbound_amount_msat)}</td></tr>
+    <tr><td class="muted">Fees earned</td><td class="num mono">${fmtMsatAsSats(s.total_fee_earned_msat)}</td></tr>
+  </table>`;
+}
+loadStats();
+initToken();
+</script>
+<!--VERSIONS-->
+</body>
+</html>

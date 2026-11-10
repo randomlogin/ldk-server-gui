@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resources</title>
+<style>
+:root {
+  --bg: #0b0e14;
+  --panel: #12161f;
+  --panel2: #171d29;
+  --border: #232b3a;
+  --text: #d7dde8;
+  --muted: #8a93a5;
+  --accent: #f7931a;
+  --green: #3fb96b;
+  --red: #e5534b;
+  --blue: #58a6ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 10px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+a { color: var(--blue); }
+.muted { color: var(--muted); }
+header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 18px; margin-bottom: 14px;
+}
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+.dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.grid { display: grid; gap: 14px; }
+.cards { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.card, .panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+}
+.card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.card .value { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.panel { overflow-x: auto; }
+.panel .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin: 6px 0 4px; }
+.banner { display: none; background: rgba(229,83,75,.12); border: 1px solid #6b2a26; color: var(--red); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
+.banner.show { display: block; }
+.topnav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.topnav a {
+  padding: 6px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  color: var(--muted); text-decoration: none;
+}
+.topnav a.current { color: var(--text); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>📈 Resources</h1>
+  <div>
+    <span class="badge"><span id="conndot" class="dot err"></span><span id="connlabel">connecting…</span></span>
+    <span class="badge" title="Last refresh"><span id="updated" class="muted">never</span></span>
+  </div>
+</header>
+<nav class="topnav">
+  <a href="/">LDK node</a>
+  <a href="/kyoto">Kyoto</a>
+  <a href="/resources" class="current">Resources</a>
+  <!--CONTROL_LINK-->
+</nav>
+
+<h2>Process <span class="muted">· the node, with its chain source (kyoto) inside it</span></h2>
+<div id="nodebanner" class="banner"></div>
+<div class="grid cards" id="nodecards"></div>
+
+<h2 style="margin-top:20px">Network traffic <span class="muted">· peer-to-peer, from kyoto, since it started</span></h2>
+<div id="netbanner" class="banner"></div>
+<div class="grid cards" id="netcards"></div>
+
+<div class="grid" style="margin-top:14px">
+  <div class="panel">
+    <h2>History
+      <select id="userange" style="float:right">
+        <option value="60">last hour</option>
+        <option value="360">last 6 hours</option>
+        <option value="1440">last 24 hours</option>
+      </select></h2>
+    <div class="label">Memory (RSS)</div>
+    <div id="chart-rss"><div class="muted">loading…</div></div>
+    <div class="label">CPU, in % of one core</div>
+    <div id="chart-cpu"><div class="muted">loading…</div></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return (d ? `${d}d ` : "") + `${h}h ${m}m ${sec}s`;
+}
+
+function fmtBytes(n) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${i ? n.toFixed(1) : n} ${units[i]}`;
+}
+
+function setConn(ok, label) {
+  $("conndot").className = "dot " + (ok ? "ok" : "err");
+  $("connlabel").textContent = label;
+}
+
+function card(label, value, sub) {
+  return `<div class="card"><div class="label">${label}</div>` +
+    `<div class="value">${value}</div><div class="sub">${sub || "&nbsp;"}</div></div>`;
+}
+
+// The node's own numbers, from its /metrics: uptime, memory, CPU time and threads.
+function renderNode(section) {
+  const banner = $("nodebanner");
+  if (!section.ok) {
+    banner.textContent = section.error;
+    banner.classList.add("show");
+    $("nodecards").innerHTML = "";
+    return;
+  }
+  banner.classList.remove("show");
+  const n = section.data;
+  const has = k => n[k] != null;
+  $("nodecards").innerHTML =
+    card("Node uptime", fmtUptime(n.uptime_seconds), "since ldk-server started") +
+    card("Memory (RSS)", has("rss_bytes") ? fmtBytes(n.rss_bytes) : "–",
+         has("peak_rss_bytes") ? `peak ${fmtBytes(n.peak_rss_bytes)}` : "not reported") +
+    card("CPU time", has("cpu_seconds") ? fmtUptime(n.cpu_seconds) : "–",
+         has("threads") ? `${n.threads} threads` : "not reported");
+}
+
+// Previous poll, to show a rate per second under the totals.
+let prev = null;
+
+// Kyoto's own numbers: how long it has run and all the peer-to-peer traffic.
+function renderNet(resp) {
+  const banner = $("netbanner");
+  if (!resp.kyoto.ok) {
+    setConn(false, "kyoto unreachable");
+    banner.textContent = resp.kyoto.error;
+    banner.classList.add("show");
+    $("netcards").innerHTML = "";
+    prev = null;
+    return;
+  }
+  banner.classList.remove("show");
+  setConn(true, "connected");
+  const s = resp.kyoto.data;
+
+  let rxRate = "", txRate = "";
+  if (prev && resp.fetched_at > prev.at && s.uptime_seconds >= prev.uptime) {
+    const dt = resp.fetched_at - prev.at;
+    rxRate = fmtBytes(Math.max(0, (s.bytes_received - prev.rx) / dt)) + "/s";
+    txRate = fmtBytes(Math.max(0, (s.bytes_sent - prev.tx) / dt)) + "/s";
+  }
+  prev = { at: resp.fetched_at, uptime: s.uptime_seconds, rx: s.bytes_received, tx: s.bytes_sent };
+
+  $("netcards").innerHTML =
+    card("Chain source uptime", fmtUptime(s.uptime_seconds), "kyoto, starts over if it restarts") +
+    card("Received", fmtBytes(s.bytes_received), rxRate) +
+    card("Sent", fmtBytes(s.bytes_sent), txRate) +
+    card("Messages in", s.messages_received.toLocaleString()) +
+    card("Messages out", s.messages_sent.toLocaleString());
+}
+
+async function refresh() {
+  try {
+    const resp = await (await fetch("/api/kyoto")).json();
+    renderNode(resp.node);
+    renderNet(resp);
+    $("updated").textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    setConn(false, "dashboard backend error");
+  }
+}
+
+// A line chart of one series as inline SVG, `points` being [{t: seconds, v: number or null}]. The
+// line breaks at a null value (after a node restart) and where readings are missing for a while.
+function lineChart(points, fmt) {
+  const W = 600, H = 100, pad = 3;
+  const known = points.filter(p => p.v != null);
+  if (known.length < 2) return `<div class="muted">collecting readings…</div>`;
+  const t0 = points[0].t, t1 = Math.max(points[points.length - 1].t, t0 + 1);
+  const peak = Math.max(...known.map(p => p.v));
+  const top = peak > 0 ? peak * 1.1 : 1;
+  const x = t => pad + (t - t0) / (t1 - t0) * (W - 2 * pad);
+  const y = v => H - pad - v / top * (H - 2 * pad);
+  const steps = points.slice(1).map((p, i) => p.t - points[i].t).sort((a, b) => a - b);
+  const gap = (steps[Math.floor(steps.length / 2)] || 10) * 6;
+  let d = "", drawing = false, previous = null;
+  for (const p of points) {
+    if (p.v == null || (previous != null && p.t - previous > gap)) drawing = false;
+    previous = p.t;
+    if (p.v == null) continue;
+    d += `${drawing ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)} `;
+    drawing = true;
+  }
+  const last = known[known.length - 1].v;
+  const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none"` +
+    ` style="display:block;background:rgba(255,255,255,0.03);border-radius:6px">` +
+    `<path d="${d}" fill="none" stroke="#ffb84d" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>` +
+    `<div class="muted" style="font-size:12px;margin:2px 0 12px">now ${fmt(last)} · highest ${fmt(peak)}` +
+    ` · ${clock(t0)} to ${clock(t1)}</div>`;
+}
+async function refreshUsage() {
+  try {
+    const resp = await (await fetch(`/api/usage-history?minutes=${$("userange").value}`)).json();
+    if (!resp.ok) return;
+    $("chart-rss").innerHTML = lineChart(resp.data.map(p => ({ t: p.t, v: p.rss })), fmtBytes);
+    $("chart-cpu").innerHTML = lineChart(resp.data.map(p => ({ t: p.t, v: p.cpu })), v => v.toFixed(1) + " %");
+  } catch (e) {}
+}
+
+refresh();
+setInterval(refresh, 3000);
+// The readings come every 10 seconds, so there is nothing new to draw more often than that.
+$("userange").onchange = refreshUsage;
+refreshUsage();
+setInterval(refreshUsage, 10000);
+</script>
+<!--VERSIONS-->
+</body>
+</html>
