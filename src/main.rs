@@ -730,7 +730,8 @@ impl AppState {
 	fn remember_destination(
 		&self, payment_id: &str, kind: &str, node_id: Option<String>, label: Option<String>,
 	) {
-		if payment_id.is_empty() {
+		// Nothing to say about this one (an invoice without a description).
+		if payment_id.is_empty() || (node_id.is_none() && label.is_none()) {
 			return;
 		}
 		let entry = json!({

@@ -54,6 +54,7 @@ anonymous, so the payments table can only say what is known:
   remembers this itself, in `--payment-destinations-file <path>` (JSON lines, mode 600, the last 5000
   payments), so it survives a restart. Without the option it is only remembered until the dashboard
   stops;
+- a BOLT11 invoice created from the control panel: what it was for (its description), shown as "for …" when it is paid. Who paid it is never known;
 - a BOLT12 payment received: the payer's note, or the offer;
 - an on-chain transaction about a channel: the channel's peer.
 

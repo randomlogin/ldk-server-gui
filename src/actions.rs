@@ -475,6 +475,8 @@ pub async fn bolt11_receive(
 	if let Some(r) = denied(&state, &headers) {
 		return r;
 	}
+	// What the invoice is for, remembered for the payments list: the node does not keep it.
+	let memo = input.description.clone().filter(|d| !d.trim().is_empty());
 	let description = input
 		.description
 		.filter(|d| !d.trim().is_empty())
@@ -491,7 +493,15 @@ pub async fn bolt11_receive(
 		expiry_secs: input.expiry_secs.unwrap_or(DEFAULT_EXPIRY_SECS),
 		amount_msat,
 	};
-	run(&state, summary, state.client.bolt11_receive(request)).await
+	// The payment id of the incoming payment is the invoice's payment hash.
+	run_sent(
+		&state,
+		summary,
+		state.client.bolt11_receive(request),
+		|created| created.payment_hash.clone(),
+		("invoice", None, memo),
+	)
+	.await
 }
 
 #[derive(Deserialize)]

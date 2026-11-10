@@ -381,6 +381,10 @@ function findCounterparty(obj) {
 // payer is anonymous), so this is what can be told: where this dashboard sent it, remembered when it
 // did (`dest`); a BOLT12 payer's note, or the offer; or the channel peer of an on-chain transaction.
 function counterparty(p, dest, dir) {
+  // An invoice created here: what it was for, which is all that is known (not who paid it).
+  if (dest && dest.kind === "invoice" && dest.label) {
+    return { sort: dest.label, html: `<span class="muted" title="what the invoice you created was for; the node does not know who paid it">for</span> ${esc(dest.label)}` };
+  }
   if (dest && (dest.node_id || dest.label)) {
     const name = dest.label ? `<span class="sub" title="${esc(dest.label)}">${esc(dest.label)}</span>` : "";
     return dest.node_id
@@ -402,7 +406,7 @@ function counterparty(p, dest, dir) {
     if (node) return { sort: node, html: idSpan(node) };
   }
   const why = dir === "INBOUND"
-    ? "the node does not say who paid this"
+    ? "the node does not say who paid this (a BOLT11 payer is anonymous); what an invoice was for is remembered only for invoices created from this dashboard"
     : "the node does not record where this went; payments sent from this dashboard's control panel are remembered";
   return { sort: "", html: `<span class="muted" title="${why}">—</span>` };
 }
