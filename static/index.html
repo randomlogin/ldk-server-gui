@@ -186,7 +186,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 function copyBtn(text) {
-  return `<button class="copy" title="copy" data-copy="${esc(text)}">⧉</button>`;
+  return `<button class="copy" title="copy" data-copy="${esc(text)}">${COPY_ICON}</button>`;
 }
 // Delegated copy handler with fallbacks (set up once). Shows ✓/✗ feedback;
 // as a last resort offers the text in a prompt for manual copying.
@@ -197,7 +197,7 @@ document.addEventListener("click", e => {
   const text = b.dataset.copy || "";
   const done = ok => {
     b.textContent = ok ? "✓" : "✗";
-    setTimeout(() => { b.textContent = "⧉"; }, 1200);
+    setTimeout(() => { b.innerHTML = COPY_ICON; }, 1200);
   };
   const manual = () => { window.prompt("Copy manually (Ctrl+C):", text); done(false); };
   if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
@@ -498,7 +498,7 @@ function channelEventText(d) {
     : String(d.state || "changed").replace(/^CHANNEL_STATE_/, "").toLowerCase().replace(/_/g, " ");
   const icon = state === "ready" ? "✅" : state === "pending" ? "⏳" : state === "open failed" || state === "closed" ? "❌" : "⚙️";
   const peer = d.counterparty_node_id ? " with " + esc(nodeName(d.counterparty_node_id)) : "";
-  const why = d.reason && d.reason.message ? " — " + esc(d.reason.message) : "";
+  const why = d.reason && d.reason.message ? " — " + esc(withSats(d.reason.message)) : "";
   return `${icon} channel ${esc(state)}${peer}${why}`;
 }
 

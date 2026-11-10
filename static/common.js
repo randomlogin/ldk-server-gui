@@ -30,7 +30,10 @@ function fmtInt(n) {
     // A list of features as a dropdown (the node's own, or a peer's in a table cell).
     "details.featlist{border:none;padding:0}" +
     "details.featlist>summary{cursor:pointer;color:var(--muted);font-weight:400;padding:0}" +
-    "details.featlist>summary:hover,details.featlist[open]>summary{color:var(--text)}";
+    "details.featlist>summary:hover,details.featlist[open]>summary{color:var(--text)}" +
+    // The copy button has a fixed height, so what is inside it cannot make its line taller.
+    "button.copy{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;line-height:1;height:1.15em;min-width:1.6em;padding:0 3px}" +
+    "button.copy svg{width:11px;height:11px}";
 
   function cellKey(row, col) {
     var cell = row.cells[col];
@@ -412,3 +415,16 @@ document.addEventListener("toggle", function (e) {
     if (el.open) openPeerFeatures[el.dataset.id] = true; else delete openPeerFeatures[el.dataset.id];
   }
 }, true);
+
+// The copy button's icon, drawn and not typed: the character used before is not in the page's font,
+// so the browser took it from another font whose taller line box pushed its line down.
+var COPY_ICON = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="4.2" y="4.2" width="6.8" height="6.8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>' +
+  '<path d="M8 4.2V2.2C8 1.5 7.5 1 6.8 1H2.2C1.5 1 1 1.5 1 2.2v4.6C1 7.5 1.5 8 2.2 8H4.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+
+// A peer's message may give an amount in BTC ("min chan size of 0.00200000 BTC"); add it in sats,
+// which is what the rest of the dashboard speaks.
+function withSats(text) {
+  return String(text == null ? "" : text).replace(/\b(\d+\.\d{8}) BTC\b/g, function (whole, btc) {
+    return whole + " (" + fmtInt(Math.round(parseFloat(btc) * 1e8)) + " sat)";
+  });
+}

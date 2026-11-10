@@ -384,7 +384,7 @@ const num = id => { const v = val(id); return v === "" ? null : Number(v); };
 const wholeOrEmpty = v => v === null || (Number.isInteger(v) && v >= 0);
 
 function copyBtn(text) {
-  return `<button class="copy" title="copy" data-copy="${esc(text)}">⧉</button>`;
+  return `<button class="copy" title="copy" data-copy="${esc(text)}">${COPY_ICON}</button>`;
 }
 // Delegated copy handler with fallbacks (set up once). Shows ✓/✗ feedback;
 // as a last resort offers the text in a prompt for manual copying.
@@ -395,7 +395,7 @@ document.addEventListener("click", e => {
   const text = b.dataset.copy || "";
   const done = ok => {
     b.textContent = ok ? "✓" : "✗";
-    setTimeout(() => { b.textContent = "⧉"; }, 1200);
+    setTimeout(() => { b.innerHTML = COPY_ICON; }, 1200);
   };
   const manual = () => { window.prompt("Copy manually (Ctrl+C):", text); done(false); };
   if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
@@ -514,20 +514,31 @@ const ACTION_STATUS = {
   sent: ["amber", "sent, waiting"], pending: ["amber", "in progress"],
   done: ["green", "done"], failed: ["red", "failed"],
 };
+const seenStatus = {};
+let firstActionsLoad = true;
 async function loadRecentActions() {
   let j;
   try { j = await (await fetch("/api/actions-log")).json(); } catch (e) { return; }
   if (!j || !j.ok) return;
+  // An action the node accepted that has now failed (a channel the peer refused, a payment that did
+  // not go through) is shown at the top, since nobody is looking at the list when it happens.
+  for (const r of j.records) {
+    if (!firstActionsLoad && (seenStatus[r.id] === "sent" || seenStatus[r.id] === "pending") && r.status === "failed") {
+      showBanner("❌ " + r.summary + " failed: " + withSats(r.detail));
+    }
+    seenStatus[r.id] = r.status;
+  }
+  firstActionsLoad = false;
   document.getElementById("recentcount").textContent = j.records.length || "";
   document.getElementById("recentbody").innerHTML = j.records.length ? j.records.map(r => {
     const [color, label] = ACTION_STATUS[r.status] || ["gray", r.status];
-    const log = (r.log || []).map(l => `<div class="mono muted" style="font-size:11px;word-break:break-word">${esc(l)}</div>`).join("");
+    const log = (r.log || []).map(l => `<div class="mono muted" style="font-size:11px;word-break:break-word">${esc(withSats(l))}</div>`).join("");
     const settled = r.updated && r.updated !== r.at ? ` · settled ${ago(r.updated)}` : "";
     return `<tr>
       <td class="muted" data-sort="${r.at}" title="asked ${esc(fmtTime(r.at))}${settled}">${ago(r.at)}</td>
       <td>${esc(r.summary)}</td>
       <td data-sort="${esc(r.status)}"><span class="pill ${color}">${esc(label)}</span></td>
-      <td style="word-break:break-word">${esc(r.detail || "")}${log}</td>
+      <td style="word-break:break-word">${esc(withSats(r.detail))}${log}</td>
     </tr>`;
   }).join("") : `<tr><td colspan="4" class="muted">no action yet</td></tr>`;
 }
