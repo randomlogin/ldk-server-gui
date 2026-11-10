@@ -40,7 +40,7 @@ const CONTROL_HTML: &str = include_str!("../static/control.html");
 const COMMON_JS: &str = include_str!("../static/common.js");
 const EVENT_BUFFER_CAP: usize = 200;
 
-// What the dashboard itself was built from, as `version|branch|commit|dirty`. Written by build.rs.
+// What the dashboard itself was built from, as `version|branch|commit|dirty|url`. Written by build.rs.
 const GUI_BUILD_INFO: &str = env!("BUILD_INFO_GUI");
 
 // Put at the end of every page, in place of `<!--VERSIONS-->`: the version, branch and commit of
@@ -51,12 +51,23 @@ const VERSIONS_FOOTER: &str = r##"<footer id="build-versions" style="margin-top:
   var box = document.getElementById("build-versions");
   var escapes = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return escapes[c]; }); }
+  // The name, branch and commit link to the repository, its branch and its commit, when the build
+  // knows the repository and it is on GitHub. Only plain https addresses are ever linked.
+  function link(href, text) {
+    if (!href) return esc(text);
+    return '<a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted">' + esc(text) + "</a>";
+  }
   function show(data) {
     var parts = (data.components || []).map(function (c) {
       var dirty = c.dirty === "true";
       var title = dirty ? "built with uncommitted changes" : "built from a clean checkout";
-      return '<span class="mono" title="' + title + '">' + esc(c.component) + " " + esc(c.version) +
-        " · " + esc(c.branch) + " @ " + esc(c.commit) +
+      var repo = /^https:\/\/[A-Za-z0-9.-]+\/[\w.\/-]+$/.test(c.url || "") ? c.url : "";
+      var github = /^https:\/\/github\.com\//.test(repo);
+      var branch = github && c.branch && c.branch !== "unknown" && c.branch !== "detached"
+        ? repo + "/tree/" + c.branch.split("/").map(encodeURIComponent).join("/") : "";
+      var commit = github && /^[0-9a-f]{7,40}$/.test(c.commit || "") ? repo + "/commit/" + c.commit : "";
+      return '<span class="mono" title="' + title + '">' + link(repo, c.component) + " " + esc(c.version) +
+        " · " + link(branch, c.branch) + " @ " + link(commit, c.commit) +
         (dirty ? ' <span style="color:var(--accent2,#ffd166)">+uncommitted</span>' : "") + "</span>";
     });
     if (data.error) parts.push('<span title="' + esc(data.error) + '">node revisions unavailable (hover for why)</span>');
@@ -559,7 +570,7 @@ fn with_versions(html: &str) -> String {
 	html.replace("<!--VERSIONS-->", VERSIONS_FOOTER)
 }
 
-// `version|branch|commit|dirty` as the JSON the footer shows.
+// `version|branch|commit|dirty|url` as the JSON the footer shows.
 fn build_info_json(component: &str, info: &str) -> Value {
 	let mut fields = info.split('|');
 	json!({
@@ -568,6 +579,7 @@ fn build_info_json(component: &str, info: &str) -> Value {
 		"branch": fields.next().unwrap_or("unknown"),
 		"commit": fields.next().unwrap_or("unknown"),
 		"dirty": fields.next().unwrap_or("unknown"),
+		"url": fields.next().unwrap_or("unknown"),
 	})
 }
 
@@ -937,7 +949,7 @@ mod tests {
 	#[test]
 	fn build_info_is_read_from_the_node_metrics() {
 		let text = "# HELP ldk_server_build_info x\n# TYPE ldk_server_build_info gauge\n\
-			ldk_server_build_info{component=\"ldk-server\",version=\"0.1.0\",branch=\"cbd-chain-source\",commit=\"7ad0bed5\",dirty=\"true\"} 1\n\
+			ldk_server_build_info{component=\"ldk-server\",version=\"0.1.0\",branch=\"cbd-chain-source\",commit=\"7ad0bed5\",dirty=\"true\",url=\"https://github.com/randomlogin/ldk-server\"} 1\n\
 			ldk_server_build_info{component=\"kyoto\",version=\"0.8.1\",branch=\"a\\\"b\",commit=\"6c3f631d\",dirty=\"false\"} 1\n\
 			ldk_server_uptime_seconds 5\n";
 		let found = parse_build_info(text);
@@ -945,16 +957,23 @@ mod tests {
 		assert_eq!(found[0]["component"], "ldk-server");
 		assert_eq!(found[0]["commit"], "7ad0bed5");
 		assert_eq!(found[0]["dirty"], "true");
+		assert_eq!(found[0]["url"], "https://github.com/randomlogin/ldk-server");
 		assert_eq!(found[1]["component"], "kyoto");
 		assert_eq!(found[1]["branch"], "a\"b");
 		assert!(parse_build_info("ldk_server_uptime_seconds 5\n").is_empty());
 	}
 
 	#[test]
-	fn own_build_info_has_four_fields() {
-		let info = build_info_json("ldk-server-gui", "0.1.0|master|abc12345|false");
+	fn own_build_info_has_five_fields() {
+		let info = build_info_json(
+			"ldk-server-gui",
+			"0.1.0|master|abc12345|false|https://github.com/randomlogin/ldk-server-gui",
+		);
 		assert_eq!(info["branch"], "master");
 		assert_eq!(info["commit"], "abc12345");
+		assert_eq!(info["url"], "https://github.com/randomlogin/ldk-server-gui");
+		// An older build that reports fewer fields.
 		assert_eq!(build_info_json("x", "0.1.0")["commit"], "unknown");
+		assert_eq!(build_info_json("x", "0.1.0|a|b|false")["url"], "unknown");
 	}
 }
