@@ -80,6 +80,29 @@ fn ok_json<T: serde::Serialize>(v: &T) -> Response {
 	}
 }
 
+// Like `run`, for a command that sends a payment: on success it also remembers where the payment
+// went, since the node does not record that. `destination` is the kind of payment (bolt11, bolt12,
+// keysend), the node it went to if known, and a name for it if there is one.
+async fn run_sent<T, F>(
+	state: &AppState, summary: String, fut: F, payment_id: impl Fn(&T) -> String,
+	destination: (&str, Option<String>, Option<String>),
+) -> Response
+where
+	F: Future<Output = Result<T, LdkServerError>>,
+	T: serde::Serialize,
+{
+	match fut.await {
+		Ok(resp) => {
+			let (kind, node_id, label) = destination;
+			state.remember_destination(&payment_id(&resp), kind, node_id, label);
+			state.refresh.notify_one();
+			state.log_action(summary).await;
+			ok_json(&resp)
+		},
+		Err(e) => err_json(StatusCode::BAD_GATEWAY, e),
+	}
+}
+
 // Runs a node command: on success triggers an immediate snapshot refresh and
 // records the action in the activity feed; on failure reports the node error.
 async fn run<T, F>(state: &AppState, summary: String, fut: F) -> Response
@@ -343,7 +366,23 @@ pub async fn bolt11_send(
 		amount_msat: input.amount_msat.filter(|a| *a > 0),
 		route_parameters: None,
 	};
-	run(&state, summary, state.client.bolt11_send(request)).await
+	// Where it goes is in the invoice, and the node does not keep it: look it up for the payments list.
+	let (node_id, label) = match state
+		.client
+		.decode_invoice(DecodeInvoiceRequest { invoice: request.invoice.clone() })
+		.await
+	{
+		Ok(decoded) => (Some(decoded.destination), decoded.description),
+		Err(_) => (None, None),
+	};
+	run_sent(
+		&state,
+		summary,
+		state.client.bolt11_send(request),
+		|sent| sent.payment_id.clone(),
+		("bolt11", node_id, label),
+	)
+	.await
 }
 
 #[derive(Deserialize)]
@@ -371,7 +410,22 @@ pub async fn bolt12_send(
 		payer_note: input.payer_note.filter(|n| !n.trim().is_empty()),
 		route_parameters: None,
 	};
-	run(&state, summary, state.client.bolt12_send(request)).await
+	let (node_id, label) = match state
+		.client
+		.decode_offer(DecodeOfferRequest { offer: request.offer.clone() })
+		.await
+	{
+		Ok(decoded) => (decoded.issuer_signing_pubkey, decoded.issuer.or(decoded.description)),
+		Err(_) => (None, None),
+	};
+	run_sent(
+		&state,
+		summary,
+		state.client.bolt12_send(request),
+		|sent| sent.payment_id.clone(),
+		("bolt12", node_id, label),
+	)
+	.await
 }
 
 #[derive(Deserialize)]
@@ -390,6 +444,7 @@ pub async fn spontaneous_send(
 		return err_json(StatusCode::BAD_REQUEST, "invalid node id or amount");
 	}
 	let summary = format!("keysend {} msat → {}", input.amount_msat, short_key(&input.node_id));
+	let destination = input.node_id.clone();
 	let request = SpontaneousSendRequest {
 		amount_msat: input.amount_msat,
 		node_id: input.node_id,
@@ -397,7 +452,14 @@ pub async fn spontaneous_send(
 		custom_tlvs: Vec::new(),
 		preimage: None,
 	};
-	run(&state, summary, state.client.spontaneous_send(request)).await
+	run_sent(
+		&state,
+		summary,
+		state.client.spontaneous_send(request),
+		|sent| sent.payment_id.clone(),
+		("keysend", Some(destination), None),
+	)
+	.await
 }
 
 #[derive(Deserialize)]

@@ -6,7 +6,7 @@
 // over Server-Sent Events. With `--enable-actions`, it also exposes mutating
 // node commands (see actions.rs), guarded by a random per-start action token.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -151,6 +151,12 @@ struct Args {
 		help = "Keep the node's memory and CPU history in this file, so the graphs survive a restart"
 	)]
 	usage_history_file: Option<PathBuf>,
+
+	#[arg(
+		long,
+		help = "Remember where the payments sent from the control panel went in this file: the node does not record a payment's destination"
+	)]
+	payment_destinations_file: Option<PathBuf>,
 }
 
 struct AppState {
@@ -169,6 +175,10 @@ struct AppState {
 	// `usage_file`, if there is one, so they survive a restart.
 	usage: std::sync::Mutex<VecDeque<UsageSample>>,
 	usage_file: Option<PathBuf>,
+	// Where payments sent from this dashboard went, by payment id, as {kind, node_id, label}. The
+	// node does not record a destination. Saved to `destinations_file`, if there is one.
+	destinations: std::sync::Mutex<HashMap<String, Value>>,
+	destinations_file: Option<PathBuf>,
 	// Set when --enable-actions is passed; required as `X-Action-Token` on action POSTs.
 	action_token: Option<Arc<str>>,
 	// Notified by actions to trigger an immediate snapshot refresh.
@@ -286,6 +296,11 @@ async fn main() {
 		None => VecDeque::new(),
 	};
 
+	let destinations = match &args.payment_destinations_file {
+		Some(path) => load_destinations(path),
+		None => HashMap::new(),
+	};
+
 	let (tx, _rx) = broadcast::channel::<Arc<str>>(256);
 	let state = Arc::new(AppState {
 		snapshot: RwLock::new(Arc::from("{\"ok\":false,\"error\":\"no data yet\"}")),
@@ -302,6 +317,8 @@ async fn main() {
 		node_log: args.node_log.clone(),
 		usage: std::sync::Mutex::new(usage_history),
 		usage_file: args.usage_history_file.clone(),
+		destinations: std::sync::Mutex::new(destinations),
+		destinations_file: args.payment_destinations_file.clone(),
 		action_token,
 		refresh: Arc::clone(&refresh),
 		index_html,
@@ -318,7 +335,9 @@ async fn main() {
 		let interval = Duration::from_secs(args.poll_interval_secs.max(1));
 		tokio::spawn(async move {
 			loop {
-				let snap = collect_snapshot(&client).await;
+				let mut snap = collect_snapshot(&client).await;
+				// Where the payments sent from here went, which the node does not record.
+				snap["destinations"] = state.destinations_json();
 				let msg = Arc::<str>::from(snap.to_string());
 				*state.snapshot.write().await = Arc::clone(&msg);
 				let _ = state.tx.send(wrap("snapshot", &msg));
@@ -701,6 +720,92 @@ const USAGE_WINDOW_SECS: u64 = 24 * 3600;
 // holds more than about two days of lines.
 const USAGE_FILE_REWRITE_EVERY: usize = 8_640;
 
+// How many payment destinations are remembered. The oldest are dropped first.
+const DESTINATIONS_CAP: usize = 5000;
+
+impl AppState {
+	// Remember where the payment `payment_id`, sent from the control panel, went: `kind` is bolt11,
+	// bolt12 or keysend, `node_id` the node it went to if known, `label` a name for the destination
+	// (an invoice's description, an offer's issuer).
+	fn remember_destination(
+		&self, payment_id: &str, kind: &str, node_id: Option<String>, label: Option<String>,
+	) {
+		if payment_id.is_empty() {
+			return;
+		}
+		let entry = json!({
+			"payment_id": payment_id, "kind": kind, "node_id": node_id, "label": label,
+			"at": now_unix(),
+		});
+		self.destinations
+			.lock()
+			.expect("destinations lock poisoned")
+			.insert(payment_id.to_string(), entry.clone());
+		if let Some(path) = &self.destinations_file {
+			if let Err(e) = append_line(path, &entry.to_string()) {
+				eprintln!("warning: cannot write the payment destinations file '{}': {e}", path.display());
+			}
+		}
+	}
+
+	// The destinations by payment id, for the page.
+	fn destinations_json(&self) -> Value {
+		let destinations = self.destinations.lock().expect("destinations lock poisoned");
+		Value::Object(
+			destinations
+				.iter()
+				.map(|(id, d)| {
+					(id.clone(), json!({ "kind": d["kind"], "node_id": d["node_id"], "label": d["label"] }))
+				})
+				.collect(),
+		)
+	}
+}
+
+// Appends a line to a file that only its owner can read, creating it if needed.
+fn append_line(path: &std::path::Path, line: &str) -> std::io::Result<()> {
+	use std::io::Write;
+	let mut options = std::fs::OpenOptions::new();
+	options.create(true).append(true);
+	#[cfg(unix)]
+	std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+	writeln!(options.open(path)?, "{line}")
+}
+
+// The destinations saved in `path`, one JSON object per line, the last line for a payment winning.
+// If there are more than `DESTINATIONS_CAP` the oldest are dropped, and the file is rewritten
+// without them and without the lines that were replaced.
+fn load_destinations(path: &std::path::Path) -> HashMap<String, Value> {
+	let Ok(text) = std::fs::read_to_string(path) else { return HashMap::new() };
+	let mut lines = 0;
+	let mut map = HashMap::new();
+	for line in text.lines().filter(|line| !line.trim().is_empty()) {
+		lines += 1;
+		let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+		let Some(id) = entry["payment_id"].as_str().map(str::to_string) else { continue };
+		map.insert(id, entry);
+	}
+	if map.len() > DESTINATIONS_CAP {
+		let mut by_age: Vec<(u64, String)> =
+			map.iter().map(|(id, e)| (e["at"].as_u64().unwrap_or(0), id.clone())).collect();
+		by_age.sort();
+		for (_, id) in by_age.into_iter().take(map.len() - DESTINATIONS_CAP) {
+			map.remove(&id);
+		}
+	}
+	if lines > map.len() {
+		let mut entries: Vec<&Value> = map.values().collect();
+		entries.sort_by_key(|e| e["at"].as_u64().unwrap_or(0));
+		let text: String = entries.iter().map(|e| format!("{e}\n")).collect();
+		let temporary = path.with_extension("tmp");
+		let written = std::fs::write(&temporary, text).and_then(|_| std::fs::rename(&temporary, path));
+		if let Err(e) = written {
+			eprintln!("warning: cannot rewrite the payment destinations file '{}': {e}", path.display());
+		}
+	}
+	map
+}
+
 fn load_usage_history(path: &std::path::Path) -> VecDeque<UsageSample> {
 	let cutoff = now_unix().saturating_sub(USAGE_WINDOW_SECS);
 	let Ok(text) = std::fs::read_to_string(path) else { return VecDeque::new() };
@@ -961,6 +1066,38 @@ mod tests {
 		assert_eq!(found[1]["component"], "kyoto");
 		assert_eq!(found[1]["branch"], "a\"b");
 		assert!(parse_build_info("ldk_server_uptime_seconds 5\n").is_empty());
+	}
+
+	#[test]
+	fn destinations_are_loaded_replaced_and_capped() {
+		let dir = std::env::temp_dir().join(format!("gui-destinations-test-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let file = dir.join("destinations.jsonl");
+		let line = |id: &str, node: &str, at: u64| {
+			json!({ "payment_id": id, "kind": "keysend", "node_id": node, "label": null, "at": at })
+				.to_string()
+		};
+
+		// The last line for a payment wins, and a line that is not JSON is skipped. The file is
+		// rewritten without them.
+		let text = format!("{}\nnot json\n{}\n{}\n", line("a", "n1", 1), line("b", "n2", 2), line("a", "n3", 3));
+		std::fs::write(&file, text).unwrap();
+		let map = load_destinations(&file);
+		assert_eq!(map.len(), 2);
+		assert_eq!(map["a"]["node_id"], "n3");
+		assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), 2);
+		assert!(load_destinations(&dir.join("missing")).is_empty());
+
+		// Past the cap the oldest go.
+		let many: String =
+			(0..DESTINATIONS_CAP + 3).map(|i| format!("{}\n", line(&format!("p{i}"), "n", i as u64))).collect();
+		std::fs::write(&file, many).unwrap();
+		let map = load_destinations(&file);
+		assert_eq!(map.len(), DESTINATIONS_CAP);
+		assert!(!map.contains_key("p0") && !map.contains_key("p2"));
+		assert!(map.contains_key("p3") && map.contains_key(&format!("p{}", DESTINATIONS_CAP + 2)));
+		assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), DESTINATIONS_CAP);
+		std::fs::remove_dir_all(&dir).unwrap();
 	}
 
 	#[test]

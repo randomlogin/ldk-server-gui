@@ -44,6 +44,28 @@ The control page asks for it once and stores it in the browser's `localStorage`;
 overall threat model is still "localhost-only": **do not bind the GUI to a non-loopback address
 when actions are enabled** unless you add proper authentication in front of it.
 
+## Who a payment went to
+
+The node records no destination for a Lightning payment, and the payer of a BOLT11 payment is
+anonymous, so the payments table can only say what is known:
+
+- a payment sent from the control panel: the node it went to (the invoice's payee, the keysend node,
+  the offer's issuer) and a name for it (the invoice description, the offer issuer). The dashboard
+  remembers this itself, in `--payment-destinations-file <path>` (JSON lines, mode 600, the last 5000
+  payments), so it survives a restart. Without the option it is only remembered until the dashboard
+  stops;
+- a BOLT12 payment received: the payer's note, or the offer;
+- an on-chain transaction about a channel: the channel's peer.
+
+Payments sent some other way (`ldk-server-cli`, another client) show "—".
+
+## Splicing
+
+The channels table has a **Splice** column: whether the peer announced splicing when it last
+connected (hover for everything it announced), and the node details list the features this node
+announces. LDK refuses to splice a channel whose peer did not announce it ("Peer does not support
+splicing"), and the control panel says so before sending the request.
+
 ## Liveness model
 
 The backend polls the node's gRPC API every `--poll-interval-secs` (default 5s) *and* subscribes to

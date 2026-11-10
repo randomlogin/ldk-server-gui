@@ -20,7 +20,12 @@ function fmtInt(n) {
     "th.sortable:hover{color:var(--text,#d7dde8)}" +
     "th.sortable::after{content:' \\21C5';opacity:.3;font-size:.85em}" +
     "th.sorted-asc::after{content:' \\25B2';opacity:1}" +
-    "th.sorted-desc::after{content:' \\25BC';opacity:1}";
+    "th.sorted-desc::after{content:' \\25BC';opacity:1}" +
+    // Tables on every page: a highlighted row under the mouse, a header that stays in view when a
+    // table scrolls inside its panel, and a panel that scrolls sideways on a narrow screen.
+    "tbody tr:hover td{background:rgba(255,255,255,.035)}" +
+    ".scroll thead th{position:sticky;top:0;background:var(--panel,#12161f);z-index:1}" +
+    ".panel{overflow-x:auto}";
 
   function cellKey(row, col) {
     var cell = row.cells[col];
@@ -289,3 +294,11 @@ function drawChart(el) {
   });
   hit.addEventListener("mouseleave", function () { hover.style.display = "none"; });
 }
+
+// Features as the node reports them, {bit: {name, is_required}}: their names in bit order, and
+// whether one of them is there.
+function featureNames(features) {
+  return Object.keys(features || {}).map(Number).sort(function (a, b) { return a - b; })
+    .map(function (bit) { return features[bit].name; });
+}
+function hasFeature(features, name) { return featureNames(features).indexOf(name) !== -1; }

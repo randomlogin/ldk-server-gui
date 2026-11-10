@@ -65,6 +65,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pill.gray { background: rgba(138,147,165,.15); color: var(--muted); }
 .pill.blue { background: rgba(88,166,255,.13); color: var(--blue); }
 .pill.purple { background: rgba(188,140,255,.14); color: var(--purple); }
+.amt-in { color: var(--green); }
+tr.failed td { opacity: .55; }
+.who .sub { display: block; color: var(--muted); font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .liqbar { width: 140px; height: 7px; background: #232b3a; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle;}
 .liqbar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
 .id { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; cursor: pointer;}
@@ -120,9 +123,10 @@ button.copy:hover { color: var(--accent2); }
     <table id="channels">
       <thead><tr>
         <th>Status</th><th>Counterparty</th><th>SCID</th>
-        <th class="num">Capacity</th><th class="num">Outbound</th><th class="num">Inbound</th><th></th>
+        <th class="num">Capacity</th><th class="num">Outbound</th><th class="num">Inbound</th>
+        <th title="whether the peer announces splicing">Splice</th><th></th>
       </tr></thead>
-      <tbody id="chbody"><tr><td colspan="7" class="muted">loading…</td></tr></tbody>
+      <tbody id="chbody"><tr><td colspan="8" class="muted">loading…</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -134,9 +138,9 @@ button.copy:hover { color: var(--accent2); }
     <div class="scroll">
     <table>
       <thead><tr>
-        <th>Time</th><th>Dir</th><th>ID</th><th>Kind</th><th class="num">Amount</th><th class="num">Fee</th><th>Status</th>
+        <th>Time</th><th>Dir</th><th title="who the payment went to or came from, as far as it is known">To / from</th><th>Kind</th><th class="num">Amount</th><th class="num">Fee</th><th>Status</th><th>ID</th>
       </tr></thead>
-      <tbody id="paybody"><tr><td colspan="7" class="muted">loading…</td></tr></tbody>
+      <tbody id="paybody"><tr><td colspan="8" class="muted">loading…</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -264,6 +268,15 @@ function refreshUptimes() {
   }).catch(() => {});
 }
 
+// The features this node announces to its peers, in bit order; * marks one the peer must support.
+function announcedFeatures(features) {
+  if (!features) return `<span class="muted" title="an older ldk-server does not report them">—</span>`;
+  return Object.keys(features).map(Number).sort((a, b) => a - b).map(bit => {
+    const f = features[bit];
+    return `<span class="pill ${f.name === "Splice" ? "green" : "gray"}" title="feature bit ${bit}${f.is_required ? ", required of peers" : ""}">${esc(f.name)}${f.is_required ? "*" : ""}</span>`;
+  }).join(" ");
+}
+
 function renderNode(n) {
   const el = document.getElementById("nodeinfo");
   if (!n || n.error) { el.innerHTML = `<span class="muted">unavailable: ${esc(n && n.error)}</span>`; return; }
@@ -282,7 +295,8 @@ function renderNode(n) {
     <div>Node uptime</div><div id="up-node">${fmtUptime(uptimes.node)}</div>
     <div>Chain source uptime</div><div id="up-chain">${fmtUptime(uptimes.chain)}</div>
     <div>Listening</div><div class="mono">${(n.listening_addresses || []).map(esc).join("<br>") || "—"}</div>
-    <div>Announced URIs</div><div class="mono" style="word-break:break-all">${(n.node_uris || []).map(u => `${esc(u)} ${copyBtn(u)}`).join("<br>") || "—"}</div>`;
+    <div>Announced URIs</div><div class="mono" style="word-break:break-all">${(n.node_uris || []).map(u => `${esc(u)} ${copyBtn(u)}`).join("<br>") || "—"}</div>
+    <div>Features we announce</div><div style="line-height:2">${announcedFeatures(n.features)}</div>`;
 }
 
 function statusPills(c) {
@@ -296,12 +310,23 @@ function statusPills(c) {
   return pills.join(" ");
 }
 
+// Whether the channel's peer announced splicing when it last connected: LDK refuses to splice
+// otherwise ("Peer does not support splicing"). The tooltip lists everything the peer announced.
+function spliceCell(c) {
+  if (!c.counterparty_features) {
+    return `<td data-sort="" title="the peer has not connected since the node started, so its features are not known">—</td>`;
+  }
+  const yes = hasFeature(c.counterparty_features, "Splice");
+  const names = esc(featureNames(c.counterparty_features).join(", "));
+  return `<td data-sort="${yes ? 1 : 0}"><span class="pill ${yes ? "green" : "gray"}" title="the peer announces: ${names}">${yes ? "splice" : "no splice"}</span></td>`;
+}
+
 function renderChannels(resp) {
   const body = document.getElementById("chbody");
   const count = document.getElementById("chcount");
   const chans = (resp && !resp.error && resp.channels) || [];
   count.textContent = chans.length;
-  if (!chans.length) { body.innerHTML = `<tr><td colspan="7" class="muted">no channels</td></tr>`; return; }
+  if (!chans.length) { body.innerHTML = `<tr><td colspan="8" class="muted">no channels</td></tr>`; return; }
   chans.sort((a, b) => (b.is_usable - a.is_usable) || (b.channel_value_sats - a.channel_value_sats));
   body.innerHTML = chans.map(c => {
     const capMsat = (c.channel_value_sats || 0) * 1000;
@@ -314,6 +339,7 @@ function renderChannels(resp) {
       <td class="num mono" data-sort="${c.channel_value_sats ?? ""}">${fmtSats(c.channel_value_sats)}</td>
       <td class="num mono" data-sort="${c.outbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.outbound_capacity_msat)}</td>
       <td class="num mono" data-sort="${c.inbound_capacity_msat ?? ""}">${fmtMsatAsSats(c.inbound_capacity_msat)}</td>
+      ${spliceCell(c)}
       <td><div class="liqbar" title="outbound share"><div style="width:${pct.toFixed(1)}%"></div></div></td>
     </tr>`;
   }).join("");
@@ -342,25 +368,67 @@ function paymentKind(p, openings) {
   return `<span class="pill purple">${esc(key.replace(/_/g, " "))}</span>`;
 }
 
-function renderPayments(resp, openings) {
+// A node ID found anywhere in an object: the counterparty of the channel an on-chain transaction
+// is about.
+function findCounterparty(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  if (typeof obj.counterparty_node_id === "string") return obj.counterparty_node_id;
+  for (const v of Object.values(obj)) { const found = findCounterparty(v); if (found) return found; }
+  return null;
+}
+
+// Who a payment went to or came from. The node does not record that for a Lightning payment (a BOLT11
+// payer is anonymous), so this is what can be told: where this dashboard sent it, remembered when it
+// did (`dest`); a BOLT12 payer's note, or the offer; or the channel peer of an on-chain transaction.
+function counterparty(p, dest, dir) {
+  if (dest && (dest.node_id || dest.label)) {
+    const name = dest.label ? `<span class="sub" title="${esc(dest.label)}">${esc(dest.label)}</span>` : "";
+    return dest.node_id
+      ? { sort: dest.node_id, html: idSpan(dest.node_id) + name }
+      : { sort: dest.label, html: esc(dest.label) };
+  }
+  const kind = p.kind || {};
+  const inner = kind.kind || kind;
+  const key = Object.keys(inner)[0];
+  const body = (key && inner[key]) || {};
+  if (key === "bolt12_offer" && body.payer_note) {
+    return { sort: body.payer_note, html: `<span title="the payer's note: ${esc(body.payer_note)}">“${esc(body.payer_note.slice(0, 40))}”</span>` };
+  }
+  if (key === "bolt12_offer" && body.offer_id) {
+    return { sort: body.offer_id, html: `<span class="muted">offer</span> ${idSpan(body.offer_id)}` };
+  }
+  if (key === "onchain") {
+    const node = findCounterparty(body.tx_type);
+    if (node) return { sort: node, html: idSpan(node) };
+  }
+  const why = dir === "INBOUND"
+    ? "the node does not say who paid this"
+    : "the node does not record where this went; payments sent from this dashboard's control panel are remembered";
+  return { sort: "", html: `<span class="muted" title="${why}">—</span>` };
+}
+
+function renderPayments(resp, openings, dests) {
   const body = document.getElementById("paybody");
   const count = document.getElementById("paycount");
   const pays = (resp && !resp.error && resp.payments) || [];
   count.textContent = pays.length + (resp && resp.next_page_token ? "+" : "");
-  if (!pays.length) { body.innerHTML = `<tr><td colspan="7" class="muted">no payments yet</td></tr>`; return; }
+  if (!pays.length) { body.innerHTML = `<tr><td colspan="8" class="muted">no payments yet</td></tr>`; return; }
   pays.sort((a, b) => (b.latest_update_timestamp || 0) - (a.latest_update_timestamp || 0));
   const pill = { SUCCEEDED: "green", PENDING: "amber", FAILED: "red" };
   body.innerHTML = pays.slice(0, 200).map(p => {
     const dir = (p.direction || "").toUpperCase();
     const st = (p.status || "").toUpperCase();
-    return `<tr title="${esc(p.payment_id)}" ${p.payment_id ? `data-pid="${esc(p.payment_id)}"` : ""}>
-      <td class="muted" data-sort="${p.latest_update_timestamp ?? ""}">${fmtTime(p.latest_update_timestamp)}</td>
+    const who = counterparty(p, (dests || {})[p.payment_id], dir);
+    const sign = dir === "INBOUND" ? "+" : dir === "OUTBOUND" ? "−" : "";
+    return `<tr class="${st === "FAILED" ? "failed" : ""}" ${p.payment_id ? `data-pid="${esc(p.payment_id)}"` : ""}>
+      <td class="muted" data-sort="${p.latest_update_timestamp ?? ""}" title="${esc(fmtTime(p.latest_update_timestamp))}">${ago(p.latest_update_timestamp)}</td>
       <td>${dir === "INBOUND" ? '<span class="pill green">↓ in</span>' : dir === "OUTBOUND" ? '<span class="pill blue">↑ out</span>' : esc(dir)}</td>
-      <td class="mono">${idSpan(p.payment_id)}</td>
+      <td class="who mono" data-sort="${esc(who.sort)}">${who.html}</td>
       <td>${paymentKind(p, openings)}</td>
-      <td class="num mono" data-sort="${p.amount_msat ?? ""}">${fmtMsatAsSats(p.amount_msat)}</td>
+      <td class="num mono ${dir === "INBOUND" ? "amt-in" : ""}" data-sort="${p.amount_msat ?? ""}">${p.amount_msat == null ? "—" : sign + fmtMsatAsSats(p.amount_msat)}</td>
       <td class="num mono muted" data-sort="${p.fee_paid_msat ?? ""}">${p.fee_paid_msat != null ? fmtMsatAsSats(p.fee_paid_msat) : "—"}</td>
       <td><span class="pill ${pill[st] || "gray"}">${esc(st.toLowerCase() || "?")}</span></td>
+      <td class="mono muted">${idSpan(p.payment_id)}</td>
     </tr>`;
   }).join("");
 }
@@ -391,7 +459,7 @@ function render(snap) {
   renderNode(snap.node);
   renderBalances(snap.balances);
   renderChannels(snap.channels);
-  renderPayments(snap.payments, fundingTxids(snap.channels));
+  renderPayments(snap.payments, fundingTxids(snap.channels), snap.destinations);
   renderPeers(snap.peers);
 }
 

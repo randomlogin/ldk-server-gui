@@ -728,6 +728,10 @@ async function closeChannel(force) {
 async function spliceIn() {
   const c = pickedChannel();
   if (!c) { showBanner("No channel selected."); return; }
+  if (c.counterparty_features && !hasFeature(c.counterparty_features, "Splice")) {
+    showBanner("This channel's peer does not announce splicing, so the node would refuse (\"Peer does not support splicing\"). The peer has to enable it first; the channel list on the main page shows what each peer announces.");
+    return;
+  }
   const amountSats = num("siamt");
   if (need(amountSats && amountSats > 0, "Enter the splice-in amount in sats.")) return;
   if (!confirm(`Splice ${fmtInt(amountSats)} sat INTO the channel with ${short(c.counterparty_node_id)}?`)) return;
@@ -738,6 +742,10 @@ async function spliceIn() {
 async function spliceOut() {
   const c = pickedChannel();
   if (!c) { showBanner("No channel selected."); return; }
+  if (c.counterparty_features && !hasFeature(c.counterparty_features, "Splice")) {
+    showBanner("This channel's peer does not announce splicing, so the node would refuse (\"Peer does not support splicing\"). The peer has to enable it first; the channel list on the main page shows what each peer announces.");
+    return;
+  }
   const amountSats = num("soamt");
   if (need(amountSats && amountSats > 0, "Enter the splice-out amount in sats.")) return;
   if (!confirm(`Splice ${fmtInt(amountSats)} sat OUT of the channel with ${short(c.counterparty_node_id)}?`)) return;
