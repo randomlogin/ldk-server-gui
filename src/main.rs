@@ -40,6 +40,7 @@ const KYOTO_HTML: &str = include_str!("../static/kyoto.html");
 const RESOURCES_HTML: &str = include_str!("../static/resources.html");
 const CONTROL_HTML: &str = include_str!("../static/control.html");
 const COMMON_JS: &str = include_str!("../static/common.js");
+const FAVICON_SVG: &str = include_str!("../static/favicon.svg");
 const EVENT_BUFFER_CAP: usize = 200;
 
 // What the dashboard itself was built from, as `version|branch|commit|dirty|url`. Written by build.rs.
@@ -595,6 +596,7 @@ async fn main() {
 	let app = Router::new()
 		.route("/", get(index))
 		.route("/common.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], COMMON_JS) }))
+		.route("/favicon.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], FAVICON_SVG) }))
 		.route("/api/versions", get(api_versions))
 		.route("/api/actions-log", get(api_actions_log))
 		.route("/api/snapshot", get(api_snapshot))
