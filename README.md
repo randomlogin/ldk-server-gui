@@ -202,4 +202,7 @@ replace `branch = "cbd-chain-source"` with `rev = "<commit>"`.
 
 The node it talks to is a separate build. The one this dashboard was made for is ldk-server branch
 `cbd-chain-source` with ldk-node branch `cbf-stats` and kyoto branch `mutinynet-stats` (all in the
-`randomlogin` forks); the version footer shows what a running node was built from.
+`randomlogin` forks). `mutinynet-stats` is the kyoto 0.9.0 release with the fork's additions on top
+(custom network magic, the `stats` feature with its `/api/stats`, `/api/peers/history` and
+`/metrics` endpoints, and the peer disconnect history the Kyoto page reads). The version footer
+shows what a running node was built from.
