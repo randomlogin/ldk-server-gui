@@ -12,6 +12,21 @@ Shows:
 - **Live activity feed** — node events (payments, channel state changes, splices) as they happen,
   plus an audit trail of control-panel actions
 
+## Chain source page
+
+A **Chain** page at `/chain` shows how the node's source of blockchain data is doing: which kind
+is configured, whether it answers, its chain tip next to the node's chain tip, and how many blocks
+the node is behind. The kind is read from the node's config file (its `[bitcoind]`, `[electrum]`,
+`[esplora]` or `[cbf]` section) and the source is probed directly — the node itself only reports
+chain-source activity for compact block filters, and those counters are on the Kyoto page (the
+Chain page links there for CBF).
+
+The probes answer the same question for each source: Esplora is asked for its tip height and hash
+over HTTP, bitcoind asks its REST interface (`/rest/chaininfo.json`) when one is configured, else
+its `getblockchaininfo` RPC with the credentials from the config, and Electrum is asked for its tip
+with `blockchain.headers.subscribe`, over plain TCP for `tcp://` and over TLS (verified against the
+web PKI roots, as the node does) for `ssl://`. No credentials are shown on the page.
+
 ## Actions panel
 
 With `--enable-actions`, an **Actions** page at `/control` can invoke node commands — a curated

@@ -34,11 +34,13 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Notify, RwLock};
 
 mod actions;
+mod chainwatch;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const KYOTO_HTML: &str = include_str!("../static/kyoto.html");
 const RESOURCES_HTML: &str = include_str!("../static/resources.html");
 const CONTROL_HTML: &str = include_str!("../static/control.html");
+const CHAIN_HTML: &str = include_str!("../static/chain.html");
 const COMMON_JS: &str = include_str!("../static/common.js");
 const FAVICON_SVG: &str = include_str!("../static/favicon.svg");
 const EVENT_BUFFER_CAP: usize = 200;
@@ -234,12 +236,15 @@ struct AppState {
 	forwards_file: Option<PathBuf>,
 	// Set when --enable-actions is passed; required as `X-Action-Token` on action POSTs.
 	action_token: Option<Arc<str>>,
+	// Chain source detected from the node's config file, for the /chain page.
+	chain_source: chainwatch::ChainSource,
 	// Notified by actions to trigger an immediate snapshot refresh.
 	refresh: Arc<Notify>,
 	// The pages with the Control link in their navigation bar, when actions are enabled.
 	index_html: Arc<str>,
 	kyoto_html: Arc<str>,
 	resources_html: Arc<str>,
+	chain_html: Arc<str>,
 }
 
 impl AppState {
@@ -397,6 +402,7 @@ async fn main() {
 	let index_html = with_control_link(INDEX_HTML, actions_enabled);
 	let kyoto_html = with_control_link(KYOTO_HTML, actions_enabled);
 	let resources_html = with_control_link(RESOURCES_HTML, actions_enabled);
+	let chain_html = with_control_link(CHAIN_HTML, actions_enabled);
 
 	// What was recorded before this start, so the graphs do not begin empty.
 	let usage_history = match &args.usage_history_file {
@@ -462,10 +468,14 @@ async fn main() {
 		forwards: std::sync::Mutex::new(forwards),
 		forwards_file: args.forwards_log_file.clone(),
 		action_token,
+		chain_source: chainwatch::detect_chain_source(
+			args.config.as_deref().or(get_default_config_path().as_deref()),
+		),
 		refresh: Arc::clone(&refresh),
 		index_html,
 		kyoto_html,
 		resources_html,
+		chain_html,
 	});
 
 	// Poller: refresh the snapshot on an interval, or immediately when an
@@ -606,6 +616,8 @@ async fn main() {
 		.route("/resources", get(resources_page))
 		.route("/api/kyoto", get(api_kyoto))
 		.route("/api/chain-events", get(api_chain_events))
+		.route("/chain", get(chain_page))
+		.route("/api/chainsource", get(chainwatch::api_chainsource))
 		.route("/api/usage-history", get(api_usage_history))
 		.route("/control", get(actions::control_page))
 		.route("/api/actions/check", post(actions::check_token))
@@ -732,6 +744,10 @@ async fn kyoto_page(State(state): State<Arc<AppState>>) -> Html<String> {
 
 async fn resources_page(State(state): State<Arc<AppState>>) -> Html<String> {
 	Html(state.resources_html.to_string())
+}
+
+async fn chain_page(State(state): State<Arc<AppState>>) -> Html<String> {
+	Html(state.chain_html.to_string())
 }
 
 // A page with the Control link put into its navigation bar, if actions are enabled, and the marker

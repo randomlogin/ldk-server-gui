@@ -16,6 +16,12 @@ reqwest = { version = "0.11", default-features = false }
 clap = { version = "4", features = ["derive"] }
 serde = "1"
 getrandom = "0.2"
+toml = "0.8"
+base64 = "0.21"
+# TLS for probing ssl:// Electrum servers (already in the dependency tree via ldk-server-client).
+tokio-rustls = "0.24"
+webpki-roots = "0.25"
+ring = "0.17"
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
